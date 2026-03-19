@@ -1,4 +1,4 @@
-// index.js (Actualizado con soporte para FARO_KEY)
+
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { webSockets } from '@libp2p/websockets';
@@ -7,7 +7,7 @@ import { yamux } from '@chainsafe/libp2p-yamux';
 import { kadDHT } from '@libp2p/kad-dht';
 import { identify } from '@libp2p/identify';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
-import { unmarshalPrivateKey } from '@libp2p/crypto/keys';
+import { privateKeyFromProtobuf } from '@libp2p/crypto/keys'; // <-- Cambiado
 import { fromString } from 'uint8arrays/from-string';
 
 async function startFaro() {
@@ -16,7 +16,8 @@ async function startFaro() {
     let privateKey;
     if (process.env.FARO_KEY) {
         console.log('🗼 Cargando clave persistente de FARO_KEY...');
-        privateKey = await unmarshalPrivateKey(fromString(process.env.FARO_KEY, 'base64pad'));
+        // Cambiado aquí también:
+        privateKey = await privateKeyFromProtobuf(fromString(process.env.FARO_KEY, 'base64pad'));
     }
 
     const node = await createLibp2p({
