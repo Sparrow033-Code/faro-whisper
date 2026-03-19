@@ -40,18 +40,4 @@ async function startFaro() {
         }
     });
 
-    // 3. ENCENDEMOS AMBOS
-    server.listen(port, () => {
-        console.log('====================================================');
-        console.log('🗼 FARO WHISPER-NODE INICIADO CON EXITO (Fachada OK)!');
-        console.log('====================================================');
-        console.log(`Bajo el ID: ${node.peerId.toString()}`);
-        console.log('Direcciones de escucha ocultas:');
-        node.getMultiaddrs().forEach((ma) => console.log(ma.toString()));
-    });
-}
 
-startFaro().catch(err => {
-    console.error('Fallo grave: ', err);
-    process.exit(1);
-});
