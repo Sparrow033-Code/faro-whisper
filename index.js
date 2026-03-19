@@ -1,4 +1,4 @@
-
+// index.js (ACTUALIZADO: connectionEncrypters y dht v16)
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { webSockets } from '@libp2p/websockets';
@@ -7,7 +7,7 @@ import { yamux } from '@chainsafe/libp2p-yamux';
 import { kadDHT } from '@libp2p/kad-dht';
 import { identify } from '@libp2p/identify';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
-import { privateKeyFromProtobuf } from '@libp2p/crypto/keys'; // <-- Cambiado
+import { privateKeyFromProtobuf } from '@libp2p/crypto/keys';
 import { fromString } from 'uint8arrays/from-string';
 
 async function startFaro() {
@@ -16,7 +16,6 @@ async function startFaro() {
     let privateKey;
     if (process.env.FARO_KEY) {
         console.log('🗼 Cargando clave persistente de FARO_KEY...');
-        // Cambiado aquí también:
         privateKey = await privateKeyFromProtobuf(fromString(process.env.FARO_KEY, 'base64pad'));
     }
 
@@ -29,7 +28,7 @@ async function startFaro() {
             ]
         },
         transports: [tcp(), webSockets()],
-        connectionEncryption: [noise()],
+        connectionEncrypters: [noise()], // <-- Renombrado para libp2p v3
         streamMuxers: [yamux()],
         services: {
             identify: identify(),
@@ -44,7 +43,7 @@ async function startFaro() {
     });
 
     console.log('====================================================');
-    console.log('🗼 FARO WHISPER-NODE INICIADO CON EXITO!');
+    console.log('🗼 FARO WHISPER-NODE INICIADO CON EXITO (Sincronía v3)!');
     console.log('====================================================');
     console.log(`Bajo el ID: ${node.peerId.toString()}`);
     console.log('Direcciones de escucha:');
