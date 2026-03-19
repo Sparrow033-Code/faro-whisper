@@ -1,3 +1,4 @@
+// package.json (ACTUALIZADO: kad-dht v16 y libp2p v3)
 {
   "name": "whispernode-faro",
   "version": "1.0.0",
@@ -8,12 +9,12 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "@chainsafe/libp2p-noise": "^15.0.0",
+    "@chainsafe/libp2p-noise": "^15.1.1",
     "@chainsafe/libp2p-yamux": "^6.0.2",
     "@libp2p/circuit-relay-v2": "^4.1.5",
     "@libp2p/crypto": "^5.1.13",
     "@libp2p/identify": "^4.0.12",
-    "@libp2p/kad-dht": "^12.0.7",
+    "@libp2p/kad-dht": "^16.1.5",
     "@libp2p/tcp": "^11.0.12",
     "@libp2p/websockets": "^10.1.6",
     "libp2p": "^3.1.5",
