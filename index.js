@@ -1,8 +1,8 @@
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { webSockets } from '@libp2p/websockets';
-import { noise } from '@libp2p/noise';
-import { yamux } from '@libp2p/yamux';
+import { noise } from '@chainsafe/libp2p-noise';
+import { yamux } from '@chainsafe/libp2p-yamux';
 import { kadDHT } from '@libp2p/kad-dht';
 import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
