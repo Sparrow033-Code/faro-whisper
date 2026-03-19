@@ -1,3 +1,4 @@
+// package.json (ACTUALIZADO: Sincronización total con el cliente)
 {
   "name": "whispernode-faro",
   "version": "1.0.0",
@@ -8,8 +9,8 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "@chainsafe/libp2p-noise": "^15.1.1",
-    "@chainsafe/libp2p-yamux": "^6.0.2",
+    "@libp2p/noise": "^1.0.1",
+    "@libp2p/yamux": "^8.0.1",
     "@libp2p/circuit-relay-v2": "^4.1.5",
     "@libp2p/crypto": "^5.1.13",
     "@libp2p/identify": "^4.0.12",
