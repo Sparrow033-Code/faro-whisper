@@ -6,33 +6,33 @@ import { yamux } from '@chainsafe/libp2p-yamux';
 import { kadDHT } from '@libp2p/kad-dht';
 import { identify } from '@libp2p/identify';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
+import * as http from 'http';
 
 async function startFaro() {
-    // Render.com asignará el puerto dinámicamente en process.env.PORT, si no, usa el 10000 local.
     const port = process.env.PORT || 10000;
 
+    // 1. FACHADA WEB: Para contentar a los robots inspectores de Render
+    const server = http.createServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('WhisperNode Faro IPFS Kademlia Node is ALIVE and RUNNING!\n');
+    });
+
+    // 2. MOTOR P2P: Montado por la puerta trasera "server" de WebSocket
     const node = await createLibp2p({
         addresses: {
-            listen: [
-                // tcp estándar para pruebas locales
-                `/ip4/0.0.0.0/tcp/${port}`,
-                // WebSockets para que las apps Web y Electron de detrás de firewalls puedan entrar
-                `/ip4/0.0.0.0/tcp/${port}/ws`
-            ]
+            // Quitamos el puerto TCP crudo ya que Render expone 1 solo puerto Web público
+            listen: [`/ip4/0.0.0.0/tcp/${port}/ws`]
         },
         transports: [
-            tcp(),
-            webSockets()
+            webSockets({ server }) // Enganchamos el P2P Cifrado encima del Servidor Web
         ],
         connectionEncryption: [noise()],
         streamMuxers: [yamux()],
         services: {
             identify: identify(),
-            // 1. Circuito Relay MUNDIAL ILIMITADO
             relay: circuitRelayServer({
                 reservations: { applyDefaultLimit: false, maxReservations: Infinity }
             }),
-            // 2. Kademlia en MODO SERVIDOR (Admite que tú guardes y leas "Dead-Drops" y busques IPs)
             dht: kadDHT({
                 protocol: '/ipfs/kad/1.0.0',
                 clientMode: false 
@@ -40,15 +40,18 @@ async function startFaro() {
         }
     });
 
-    console.log('====================================================');
-    console.log('🗼 FARO WHISPER-NODE INICIADO CON EXITO!');
-    console.log('====================================================');
-    console.log(`Bajo el ID: ${node.peerId.toString()}`);
-    console.log('Direcciones de escucha:');
-    node.getMultiaddrs().forEach((ma) => console.log(ma.toString()));
+    // 3. ENCENDEMOS AMBOS
+    server.listen(port, () => {
+        console.log('====================================================');
+        console.log('🗼 FARO WHISPER-NODE INICIADO CON EXITO (Fachada OK)!');
+        console.log('====================================================');
+        console.log(`Bajo el ID: ${node.peerId.toString()}`);
+        console.log('Direcciones de escucha ocultas:');
+        node.getMultiaddrs().forEach((ma) => console.log(ma.toString()));
+    });
 }
 
 startFaro().catch(err => {
-    console.error('El Faro se ha apagado o falló: ', err);
+    console.error('Fallo grave: ', err);
     process.exit(1);
 });
