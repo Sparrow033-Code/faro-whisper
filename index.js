@@ -1,3 +1,4 @@
+// index.js (FIX: Solo escucha en WebSockets para evitar conflicto de puertos en Render)
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { webSockets } from '@libp2p/websockets';
@@ -5,7 +6,7 @@ import { noise } from '@chainsafe/libp2p-noise';
 import { yamux } from '@chainsafe/libp2p-yamux';
 import { kadDHT } from '@libp2p/kad-dht';
 import { identify } from '@libp2p/identify';
-import { ping } from '@libp2p/ping'; // <-- Nuevo import
+import { ping } from '@libp2p/ping';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { privateKeyFromProtobuf } from '@libp2p/crypto/keys';
 import { fromString } from 'uint8arrays/from-string';
@@ -23,7 +24,7 @@ async function startFaro() {
         privateKey,
         addresses: {
             listen: [
-                `/ip4/0.0.0.0/tcp/${port}`,
+                // Render solo permite un puerto. Usamos WS que es el más versátil.
                 `/ip4/0.0.0.0/tcp/${port}/ws`
             ]
         },
@@ -32,7 +33,7 @@ async function startFaro() {
         streamMuxers: [yamux()],
         services: {
             identify: identify(),
-            ping: ping(), // <-- Servicio obligatorio para DHT v16
+            ping: ping(),
             relay: circuitRelayServer({
                 reservations: { applyDefaultLimit: false, maxReservations: Infinity }
             }),
