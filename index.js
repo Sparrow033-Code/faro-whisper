@@ -1,8 +1,8 @@
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { webSockets } from '@libp2p/websockets';
-import { noise } from '@libp2p/noise'; // <-- Cambiado de @chainsafe
-import { yamux } from '@libp2p/yamux'; // <-- Cambiado de @chainsafe
+import { noise } from '@libp2p/noise';
+import { yamux } from '@libp2p/yamux';
 import { kadDHT } from '@libp2p/kad-dht';
 import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
@@ -16,7 +16,11 @@ async function startFaro() {
     let privateKey;
     if (process.env.FARO_KEY) {
         console.log('🗼 Cargando clave persistente de FARO_KEY...');
-        privateKey = await privateKeyFromProtobuf(fromString(process.env.FARO_KEY, 'base64pad'));
+        try {
+            privateKey = await privateKeyFromProtobuf(fromString(process.env.FARO_KEY, 'base64pad'));
+        } catch (e) {
+            console.error('❌ Error cargando FARO_KEY:', e.message);
+        }
     }
 
     const node = await createLibp2p({
@@ -36,8 +40,11 @@ async function startFaro() {
                 reservations: { applyDefaultLimit: false, maxReservations: Infinity }
             }),
             dht: kadDHT({
-                protocol: '/ipfs/kad/1.0.0',
-                clientMode: false 
+                protocol: '/wsmp/kad/1.0.0',
+                clientMode: false,
+                validators: {
+                    wsmp: async (key, value) => {}
+                }
             })
         }
     });
