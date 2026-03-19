@@ -1,9 +1,9 @@
-// index.js (FIX: Solo escucha en WebSockets para evitar conflicto de puertos en Render)
+// index.js (ACTUALIZADO: Imports sincronizados)
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { webSockets } from '@libp2p/websockets';
-import { noise } from '@chainsafe/libp2p-noise';
-import { yamux } from '@chainsafe/libp2p-yamux';
+import { noise } from '@libp2p/noise'; // <-- Cambiado de @chainsafe
+import { yamux } from '@libp2p/yamux'; // <-- Cambiado de @chainsafe
 import { kadDHT } from '@libp2p/kad-dht';
 import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
@@ -24,7 +24,6 @@ async function startFaro() {
         privateKey,
         addresses: {
             listen: [
-                // Render solo permite un puerto. Usamos WS que es el más versátil.
                 `/ip4/0.0.0.0/tcp/${port}/ws`
             ]
         },
@@ -45,7 +44,7 @@ async function startFaro() {
     });
 
     console.log('====================================================');
-    console.log('🗼 FARO WHISPER-NODE INICIADO CON EXITO!');
+    console.log('🗼 FARO WHISPER-NODE INICIADO CON EXITO (v3.1.5)!');
     console.log('====================================================');
     console.log(`Bajo el ID: ${node.peerId.toString()}`);
     console.log('Direcciones de escucha:');
