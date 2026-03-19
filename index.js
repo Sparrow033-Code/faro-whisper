@@ -1,3 +1,4 @@
+// index.js (Actualizado con soporte para FARO_KEY)
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { webSockets } from '@libp2p/websockets';
@@ -6,25 +7,27 @@ import { yamux } from '@chainsafe/libp2p-yamux';
 import { kadDHT } from '@libp2p/kad-dht';
 import { identify } from '@libp2p/identify';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
-import * as http from 'http';
+import { unmarshalPrivateKey } from '@libp2p/crypto/keys';
+import { fromString } from 'uint8arrays/from-string';
 
 async function startFaro() {
     const port = process.env.PORT || 10000;
 
-    // 1. FACHADA WEB: Para contentar a los robots inspectores de Render
-    const server = http.createServer((req, res) => {
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('WhisperNode Faro Server is ALIVE and RUNNING!\n');
-    });
+    let privateKey;
+    if (process.env.FARO_KEY) {
+        console.log('🗼 Cargando clave persistente de FARO_KEY...');
+        privateKey = await unmarshalPrivateKey(fromString(process.env.FARO_KEY, 'base64pad'));
+    }
 
-    // 2. MOTOR P2P: Montado por la puerta trasera "server" de WebSocket
     const node = await createLibp2p({
+        privateKey,
         addresses: {
-            listen: [`/ip4/0.0.0.0/tcp/${port}/ws`]
+            listen: [
+                `/ip4/0.0.0.0/tcp/${port}`,
+                `/ip4/0.0.0.0/tcp/${port}/ws`
+            ]
         },
-        transports: [
-            webSockets({ server }) // Enganchamos el P2P Cifrado encima del Servidor Web
-        ],
+        transports: [tcp(), webSockets()],
         connectionEncryption: [noise()],
         streamMuxers: [yamux()],
         services: {
@@ -39,16 +42,15 @@ async function startFaro() {
         }
     });
 
-    // 3. Imprimir el exito por pantalla (el router web ya lo enciende libp2p solo)
     console.log('====================================================');
-    console.log('🗼 FARO WHISPER-NODE INICIADO CON EXITO (Fachada OK)!');
+    console.log('🗼 FARO WHISPER-NODE INICIADO CON EXITO!');
     console.log('====================================================');
     console.log(`Bajo el ID: ${node.peerId.toString()}`);
-    console.log('Direcciones de escucha ocultas:');
+    console.log('Direcciones de escucha:');
     node.getMultiaddrs().forEach((ma) => console.log(ma.toString()));
 }
 
 startFaro().catch(err => {
-    console.error('Fallo grave: ', err);
+    console.error('El Faro se ha apagado o falló: ', err);
     process.exit(1);
 });
