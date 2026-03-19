@@ -1,4 +1,3 @@
-// package.json (ACTUALIZADO: kad-dht v16 y libp2p v3)
 {
   "name": "whispernode-faro",
   "version": "1.0.0",
