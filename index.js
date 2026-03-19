@@ -14,13 +14,12 @@ async function startFaro() {
     // 1. FACHADA WEB: Para contentar a los robots inspectores de Render
     const server = http.createServer((req, res) => {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('WhisperNode Faro IPFS Kademlia Node is ALIVE and RUNNING!\n');
+        res.end('WhisperNode Faro Server is ALIVE and RUNNING!\n');
     });
 
     // 2. MOTOR P2P: Montado por la puerta trasera "server" de WebSocket
     const node = await createLibp2p({
         addresses: {
-            // Quitamos el puerto TCP crudo ya que Render expone 1 solo puerto Web público
             listen: [`/ip4/0.0.0.0/tcp/${port}/ws`]
         },
         transports: [
@@ -40,4 +39,16 @@ async function startFaro() {
         }
     });
 
+    // 3. Imprimir el exito por pantalla (el router web ya lo enciende libp2p solo)
+    console.log('====================================================');
+    console.log('🗼 FARO WHISPER-NODE INICIADO CON EXITO (Fachada OK)!');
+    console.log('====================================================');
+    console.log(`Bajo el ID: ${node.peerId.toString()}`);
+    console.log('Direcciones de escucha ocultas:');
+    node.getMultiaddrs().forEach((ma) => console.log(ma.toString()));
+}
 
+startFaro().catch(err => {
+    console.error('Fallo grave: ', err);
+    process.exit(1);
+});
