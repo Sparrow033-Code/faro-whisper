@@ -1,4 +1,3 @@
-// index.js (ACTUALIZADO: connectionEncrypters y dht v16)
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { webSockets } from '@libp2p/websockets';
@@ -6,6 +5,7 @@ import { noise } from '@chainsafe/libp2p-noise';
 import { yamux } from '@chainsafe/libp2p-yamux';
 import { kadDHT } from '@libp2p/kad-dht';
 import { identify } from '@libp2p/identify';
+import { ping } from '@libp2p/ping'; // <-- Nuevo import
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { privateKeyFromProtobuf } from '@libp2p/crypto/keys';
 import { fromString } from 'uint8arrays/from-string';
@@ -28,10 +28,11 @@ async function startFaro() {
             ]
         },
         transports: [tcp(), webSockets()],
-        connectionEncrypters: [noise()], // <-- Renombrado para libp2p v3
+        connectionEncrypters: [noise()],
         streamMuxers: [yamux()],
         services: {
             identify: identify(),
+            ping: ping(), // <-- Servicio obligatorio para DHT v16
             relay: circuitRelayServer({
                 reservations: { applyDefaultLimit: false, maxReservations: Infinity }
             }),
@@ -43,7 +44,7 @@ async function startFaro() {
     });
 
     console.log('====================================================');
-    console.log('🗼 FARO WHISPER-NODE INICIADO CON EXITO (Sincronía v3)!');
+    console.log('🗼 FARO WHISPER-NODE INICIADO CON EXITO!');
     console.log('====================================================');
     console.log(`Bajo el ID: ${node.peerId.toString()}`);
     console.log('Direcciones de escucha:');
