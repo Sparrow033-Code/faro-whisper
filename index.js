@@ -45,6 +45,11 @@ async function startFaro() {
             listen: [`/ip4/0.0.0.0/tcp/${port}/ws`],
             announce: [`/dns4/faro-whisper.onrender.com/tcp/443/wss`]
         },
+        connectionManager: {
+            maxConnections: 5000,
+            minConnections: 10,
+            maxIdleTime: 24 * 60 * 60 * 1000, // 24 horas — no cerrar conexiones inactivas
+        },
         transports: [
             tcp(),
             webSockets({ filter: (addrs) => addrs })
