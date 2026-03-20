@@ -1,14 +1,15 @@
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { webSockets } from '@libp2p/websockets';
-import { noise } from '@chainsafe/libp2p-noise';
-import { yamux } from '@chainsafe/libp2p-yamux';
+import { noise } from '@libp2p/noise';
+import { yamux } from '@libp2p/yamux';
 import { kadDHT } from '@libp2p/kad-dht';
 import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { createFromProtobuf } from '@libp2p/peer-id-factory';
 import { fromString } from 'uint8arrays/from-string';
+
 
 async function startFaro() {
     const port = process.env.PORT || 10000;
@@ -17,10 +18,14 @@ async function startFaro() {
     if (process.env.FARO_KEY) {
         console.log('🗼 Cargando clave persistente de FARO_KEY...');
         try {
-            peerId = await createFromProtobuf(fromString(process.env.FARO_KEY, 'base64pad'));
+            const keyBuffer = fromString(process.env.FARO_KEY, 'base64pad');
+            peerId = await createFromProtobuf(keyBuffer);
+            console.log('✅ PeerId cargado correctamente:', peerId.toString());
         } catch (e) {
-            console.error('❌ Error cargando FARO_KEY:', e.message);
+            console.error('❌ Error crítico cargando FARO_KEY. Se generará un ID aleatorio (¡esto romperá la conexión de los clientes!):', e.message);
         }
+    } else {
+        console.warn('⚠️ No se encontró FARO_KEY en las variables de entorno. Usando ID aleatorio temporal.');
     }
 
     const node = await createLibp2p({
@@ -28,6 +33,10 @@ async function startFaro() {
         addresses: {
             listen: [
                 `/ip4/0.0.0.0/tcp/${port}/ws`
+            ],
+            announce: [
+                // Render.com mapea HTTPS/WSS (443) a nuestro puerto interno (WS)
+                `/dns4/faro-whisper.onrender.com/tcp/443/wss/p2p/${peerId.toString()}`
             ]
         },
         transports: [tcp(), webSockets()],
@@ -37,25 +46,41 @@ async function startFaro() {
             identify: identify(),
             ping: ping(),
             relay: circuitRelayServer({
-                reservations: { applyDefaultLimit: false, maxReservations: Infinity }
+                reservations: {
+                    applyDefaultLimit: false,
+                    maxReservations: 1000 // Aumentado para soportar muchos clientes
+                }
             }),
             dht: kadDHT({
                 protocol: '/wsmp/kad/1.0.0',
-                clientMode: false,
+                clientMode: false, // El Faro debe actuar como SERVIDOR en la DHT
                 validators: {
-                    wsmp: async (key, value) => {}
+                    wsmp: async (key, value) => {
+                        // Validador permissivo para WSMP
+                        return true;
+                    }
                 }
             })
         }
     });
 
     console.log('====================================================');
-    console.log('🗼 FARO WHISPER-NODE INICIADO CON EXITO (v3.1.5)!');
+    console.log('🗼 FARO WHISPER-NODE (v3.2.0) - Render.com Ready!');
     console.log('====================================================');
     console.log(`Bajo el ID: ${node.peerId.toString()}`);
     console.log('Direcciones de escucha:');
-    node.getMultiaddrs().forEach((ma) => console.log(ma.toString()));
+    node.getMultiaddrs().forEach((ma) => console.log(`  ${ma.toString()}`));
+    
+    // Manejo de cierre gracioso
+    const stop = async () => {
+        console.log('\n🛑 Apagando el Faro...');
+        await node.stop();
+        process.exit(0);
+    };
+    process.on('SIGINT', stop);
+    process.on('SIGTERM', stop);
 }
+
 
 startFaro().catch(err => {
     console.error('El Faro se ha apagado o falló: ', err);
