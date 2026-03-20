@@ -31,8 +31,18 @@ async function startFaro() {
     if (!privateKey) {
         console.warn('⚠️ Generando nueva identidad temporal...');
         privateKey = await generateKeyPair('Ed25519');
+        // PARCHE DE COMPATIBILIDAD: Algunas versiones antiguas esperan .public y las nuevas .publicKey
+        if (privateKey.publicKey && !privateKey.public) {
+            privateKey.public = privateKey.publicKey;
+        }
+        
         const exported = privateKeyToProtobuf(privateKey);
         console.log(`\n🔑 NUEVA FARO_KEY (Guárdala en Render):\n${toString(exported, 'base64pad')}\n`);
+    }
+
+    // Parche por si se cargó de FARO_KEY pero no tiene la propiedad correcta
+    if (privateKey.publicKey && !privateKey.public) {
+        privateKey.public = privateKey.publicKey;
     }
 
     // En libp2p 1.x es mejor pasar el PeerId ya creado desde la clave
