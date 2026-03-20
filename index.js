@@ -1,3 +1,4 @@
+import http from 'http';
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { webSockets } from '@libp2p/websockets';
@@ -41,7 +42,7 @@ function cleanExpiredDrops() {
 }
 
 /**
- * PROTOCOLO STORE: Cliente envía, Faro almacena. Fire-and-forget (sin respuesta).
+ * PROTOCOLO STORE (P2P): Cliente envía, Faro almacena. Fire-and-forget (sin respuesta).
  * Formato del mensaje: <hexBoxId> <base64Payload>
  */
 function handleDropStore(data) {
@@ -69,7 +70,7 @@ function handleDropStore(data) {
             const box = dropBoxes.get(boxId);
 
             if (box.length >= MAX_DROPS_PER_BOX) {
-                box.shift(); // Descartamos el más viejo
+                box.shift();
             }
 
             box.push({ payload, timestamp: Date.now() });
@@ -81,35 +82,31 @@ function handleDropStore(data) {
     reader();
 }
 
-/**
- * PROTOCOLO FETCH: Cliente abre stream, Faro responde con el drop (o vacío).
- * El cliente envía el boxId, y luego el Faro responde escribiendo el payload.
- * Usamos un patrón "read boxId from source, write response to sink".
- * PERO: como los streams son unidireccionales en la práctica,
- * el boxId viene codificado en la dirección del protocolo.
- * Formato: Cliente conecta, Faro envía el primer drop disponible o "EMPTY".
- */
-function handleDropFetch(data) {
-    const { stream } = data;
-    const chunks = [];
 
-    const reader = async () => {
-        try {
-            // Leer el boxId del cliente
-            for await (const chunk of stream.source) {
-                chunks.push(chunk.subarray());
+// ==========================================
+// HTTP SERVER PARA FETCH (evita streams bidireccionales)
+// ==========================================
+function createHttpServer() {
+    return http.createServer((req, res) => {
+        // CORS
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET');
+
+        // GET /fetch/<boxId> → entrega primer drop del buzón
+        if (req.method === 'GET' && req.url && req.url.startsWith('/fetch/')) {
+            const boxId = decodeURIComponent(req.url.substring(7)); // después de '/fetch/'
+            
+            if (!boxId || boxId.length < 8) {
+                res.writeHead(400);
+                res.end('BAD_REQUEST');
+                return;
             }
-
-            const boxId = toString(new Uint8Array(Buffer.concat(chunks))).trim();
-            if (!boxId) return;
 
             const box = dropBoxes.get(boxId);
 
             if (!box || box.length === 0) {
-                // Responder con EMPTY
-                try {
-                    await stream.sink([fromString('EMPTY')]);
-                } catch (e) {}
+                res.writeHead(200, { 'Content-Type': 'text/plain' });
+                res.end('EMPTY');
                 return;
             }
 
@@ -119,15 +116,30 @@ function handleDropFetch(data) {
                 dropBoxes.delete(boxId);
             }
 
-            console.log(`[Buzón] 📤 Drop entregado desde buzón ${boxId.substring(0, 8)}...`);
-            try {
-                await stream.sink([fromString(drop.payload)]);
-            } catch (e) {}
-        } catch (e) {
-            // Stream cerrado
+            console.log(`[Buzón] 📤 Drop entregado (HTTP) desde buzón ${boxId.substring(0, 8)}...`);
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            res.end(drop.payload);
+            return;
         }
-    };
-    reader();
+
+        // GET /status → diagnóstico rápido
+        if (req.method === 'GET' && req.url === '/status') {
+            let totalDrops = 0;
+            for (const box of dropBoxes.values()) totalDrops += box.length;
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ 
+                status: 'ok', 
+                version: '4.3', 
+                buzones: dropBoxes.size, 
+                drops: totalDrops 
+            }));
+            return;
+        }
+
+        // Cualquier otra cosa → OK simple (para health checks de Render)
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('FARO v4.3');
+    });
 }
 
 
@@ -135,7 +147,7 @@ function handleDropFetch(data) {
 // ARRANQUE DEL FARO
 // ==========================================
 async function startFaro() {
-    console.log('--- FARO v4.2 (Buzón Ciego Split) INICIANDO ---');
+    console.log('--- FARO v4.3 (HTTP Fetch + P2P Store) INICIANDO ---');
     const port = process.env.PORT || 10000;
 
     // Carga de identidad persistente
@@ -152,11 +164,20 @@ async function startFaro() {
         }
     }
 
+    // 1. Crear HTTP server con endpoint de FETCH
+    const httpServer = createHttpServer();
+
+    // 2. Arrancar HTTP server
+    await new Promise((resolve) => {
+        httpServer.listen(port, '0.0.0.0', resolve);
+    });
+    console.log(`📡 HTTP Server escuchando en puerto ${port}`);
+
+    // 3. Crear nodo libp2p usando el HTTP server existente para WebSockets
     const node = await createLibp2p({
         ...(privateKey ? { privateKey } : {}),
-        nodeInfo: { name: 'whispernode-faro', version: '4.2.0' },
+        nodeInfo: { name: 'whispernode-faro', version: '4.3.0' },
         addresses: {
-            listen: [`/ip4/0.0.0.0/tcp/${port}/ws`],
             announce: [`/dns4/faro-whisper.onrender.com/tcp/443/wss`]
         },
         connectionManager: {
@@ -166,7 +187,10 @@ async function startFaro() {
         },
         transports: [
             tcp(),
-            webSockets({ filter: (addrs) => addrs })
+            webSockets({ 
+                websocket: { server: httpServer },
+                filter: (addrs) => addrs 
+            })
         ],
         connectionEncrypters: [noise()],
         streamMuxers: [yamux()],
@@ -184,14 +208,14 @@ async function startFaro() {
         }
     });
 
-    // Registrar protocolos de buzón (separados para compatibilidad con streams unidireccionales)
+    // Registrar protocolo P2P para STORE (fire-and-forget, funciona perfecto)
     await node.handle('/wsmp/drop/store/1.0.0', handleDropStore);
-    await node.handle('/wsmp/drop/fetch/1.0.0', handleDropFetch);
 
     await node.start();
-    console.log(`\n🚀 FARO v4.2 ONLINE (Buzón Ciego Split)`);
+    console.log(`\n🚀 FARO v4.3 ONLINE`);
     console.log(`📍 PeerID: ${node.peerId.toString()}`);
-    console.log(`📬 Protocolos: /wsmp/drop/store/1.0.0, /wsmp/drop/fetch/1.0.0`);
+    console.log(`📬 STORE: /wsmp/drop/store/1.0.0 (P2P)`);
+    console.log(`📬 FETCH: GET /fetch/<boxId> (HTTP)`);
 
     // Exportar clave si es nueva
     if (!privateKey) {
@@ -201,7 +225,7 @@ async function startFaro() {
             console.log(`🔑 NUEVA FARO_KEY PARA RENDER:`);
             console.log(toString(exported, 'base64pad'));
             console.log(`${'='.repeat(60)}\n`);
-        } catch (e) {}
+        } catch (e) { }
     }
 
     // Limpieza de drops expirados cada hora
@@ -213,6 +237,7 @@ async function startFaro() {
 
     const stop = async () => {
         await node.stop();
+        httpServer.close();
         process.exit(0);
     };
     process.on('SIGINT', stop);
