@@ -39,7 +39,17 @@ async function startFaro() {
                 `/dns4/faro-whisper.onrender.com/tcp/443/wss/p2p/${peerId.toString()}`
             ]
         },
-        transports: [tcp(), webSockets()],
+        connectionManager: {
+            maxConnections: 5000,
+            minConnections: 10,
+            maxIdleTime: 24 * 60 * 60 * 1000, // 24 horas de gracia para conexiones inactivas
+        },
+        transports: [
+            tcp(),
+            webSockets({
+                filter: (addrs) => addrs // Aceptar cualquier dirección (incluyendo WSS)
+            })
+        ],
         connectionEncrypters: [noise()],
         streamMuxers: [yamux()],
         services: {
@@ -64,10 +74,20 @@ async function startFaro() {
         }
     });
 
-    console.log('====================================================');
-    console.log('🗼 FARO WHISPER-NODE (v3.2.0) - Render.com Ready!');
-    console.log('====================================================');
-    console.log(`Bajo el ID: ${node.peerId.toString()}`);
+    await node.start();
+    console.log(`\n🚀 Faro WhisperNode v3.2.1 desplegado con éxito!`);
+    console.log(`🔗 Rendimiento: 1000 reservas de relay permitidas.`);
+    console.log(`📍 Dirección de anuncio: /dns4/faro-whisper.onrender.com/tcp/443/wss/p2p/${node.peerId.toString()}`);
+
+    // Logs de monitorización para Render
+    node.addEventListener('peer:connect', (evt) => {
+        console.log(`[Connect] 🤝 Nuevo usuario vinculado: ${evt.detail.toString().slice(0, 16)}...`);
+    });
+
+    node.addEventListener('peer:disconnect', (evt) => {
+        console.log(`[Disconnect] 👋 Usuario desconectado: ${evt.detail.toString().slice(0, 16)}...`);
+    });
+
     console.log('Direcciones de escucha:');
     node.getMultiaddrs().forEach((ma) => console.log(`  ${ma.toString()}`));
     
