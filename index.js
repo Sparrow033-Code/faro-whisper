@@ -164,20 +164,15 @@ async function startFaro() {
         }
     }
 
-    // 1. Crear HTTP server con endpoint de FETCH
+    // 1. Crear HTTP server con endpoint de FETCH (NO pre-listen, libp2p lo arranca)
     const httpServer = createHttpServer();
 
-    // 2. Arrancar HTTP server
-    await new Promise((resolve) => {
-        httpServer.listen(port, '0.0.0.0', resolve);
-    });
-    console.log(`📡 HTTP Server escuchando en puerto ${port}`);
-
-    // 3. Crear nodo libp2p usando el HTTP server existente para WebSockets
+    // 2. Crear nodo libp2p — el WS transport usará nuestro httpServer
     const node = await createLibp2p({
         ...(privateKey ? { privateKey } : {}),
         nodeInfo: { name: 'whispernode-faro', version: '4.3.0' },
         addresses: {
+            listen: [`/ip4/0.0.0.0/tcp/${port}/ws`],
             announce: [`/dns4/faro-whisper.onrender.com/tcp/443/wss`]
         },
         connectionManager: {
