@@ -7,29 +7,30 @@ import { kadDHT } from '@libp2p/kad-dht';
 import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
-import { createFromProtobuf } from '@libp2p/peer-id-factory';
+import { unmarshalPrivateKey } from '@libp2p/crypto/keys';
 import { fromString } from 'uint8arrays/from-string';
 
 
 async function startFaro() {
     const port = process.env.PORT || 10000;
 
-    let peerId;
+    let privateKey;
     if (process.env.FARO_KEY) {
         console.log('🗼 Cargando clave persistente de FARO_KEY...');
         try {
             const keyBuffer = fromString(process.env.FARO_KEY, 'base64pad');
-            peerId = await createFromProtobuf(keyBuffer);
-            console.log('✅ PeerId cargado correctamente:', peerId.toString());
+            privateKey = await unmarshalPrivateKey(keyBuffer);
+            console.log('✅ Clave privada cargada correctamente.');
         } catch (e) {
-            console.error('❌ Error crítico cargando FARO_KEY. Se generará un ID aleatorio (¡esto romperá la conexión de los clientes!):', e.message);
+            console.error('❌ Error crítico cargando FARO_KEY. Se generará un ID aleatorio:', e.message);
         }
     } else {
         console.warn('⚠️ No se encontró FARO_KEY en las variables de entorno. Usando ID aleatorio temporal.');
     }
 
     const node = await createLibp2p({
-        peerId,
+        // Forzamos la identidad cargada usando la clave privada desempaquetada
+        privateKey: privateKey,
         addresses: {
             listen: [
                 `/ip4/0.0.0.0/tcp/${port}/ws`
