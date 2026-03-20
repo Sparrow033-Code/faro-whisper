@@ -7,7 +7,7 @@ import { kadDHT } from '@libp2p/kad-dht';
 import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
-import { unmarshalPrivateKey } from '@libp2p/crypto/keys';
+import { privateKeyFromProtobuf } from '@libp2p/crypto/keys';
 import { fromString } from 'uint8arrays/from-string';
 
 
@@ -19,7 +19,7 @@ async function startFaro() {
         console.log('🗼 Cargando clave persistente de FARO_KEY...');
         try {
             const keyBuffer = fromString(process.env.FARO_KEY, 'base64pad');
-            privateKey = await unmarshalPrivateKey(keyBuffer);
+            privateKey = privateKeyFromProtobuf(keyBuffer);
             console.log('✅ Clave privada cargada correctamente.');
         } catch (e) {
             console.error('❌ Error crítico cargando FARO_KEY. Se generará un ID aleatorio:', e.message);
