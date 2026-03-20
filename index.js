@@ -19,18 +19,35 @@ async function startFaro() {
         console.log('🗼 Cargando clave persistente de FARO_KEY...');
         try {
             const keyBuffer = fromString(process.env.FARO_KEY, 'base64pad');
+            console.log(`DEBUG: keyBuffer length = ${keyBuffer.length} bytes`);
             privateKey = privateKeyFromProtobuf(keyBuffer);
             console.log('✅ Clave privada cargada correctamente.');
         } catch (e) {
-            console.error('❌ Error crítico cargando FARO_KEY. Se generará un ID aleatorio:', e.message);
+            console.error('❌ Error cargando FARO_KEY (Protobuf inváldo o clave pública en lugar de privada):', e.message);
+            // Si falla como protobuf, intentamos cargarla como clave Ed25519 pura por si acaso
+            console.warn('⚠️ Intentando cargar como clave raw Ed25519...');
+            try {
+                const { ed25519 } = await import('@libp2p/crypto/keys');
+                const keyBuffer = fromString(process.env.FARO_KEY, 'base64pad');
+                // Si tiene 64 bytes es una clave privada ed25519 completa de libp2p
+                privateKey = await ed25519.unmarshalEd25519PrivateKey(keyBuffer);
+                console.log('✅ Clave privada Ed25519 (raw) cargada correctamente.');
+            } catch (e2) {
+                console.error('❌ Falló también el intento de carga raw. Se usará un ID aleatorio.', e2.message);
+            }
         }
     } else {
         console.warn('⚠️ No se encontró FARO_KEY en las variables de entorno. Usando ID aleatorio temporal.');
     }
 
     const node = await createLibp2p({
-        // Forzamos la identidad cargada usando la clave privada desempaquetada
-        privateKey: privateKey,
+        // Solo pasamos la privateKey si se cargó correctamente. 
+        // Si no, libp2p generará una nueva automáticamente sin chocar.
+        ...(privateKey ? { privateKey } : {}),
+        nodeInfo: {
+            name: 'whispernode-faro',
+            version: '3.2.2'
+        },
         addresses: {
             listen: [
                 `/ip4/0.0.0.0/tcp/${port}/ws`
