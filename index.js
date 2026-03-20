@@ -36,7 +36,7 @@ async function startFaro() {
             ],
             announce: [
                 // Render.com mapea HTTPS/WSS (443) a nuestro puerto interno (WS)
-                `/dns4/faro-whisper.onrender.com/tcp/443/wss/p2p/${peerId.toString()}`
+                `/dns4/faro-whisper.onrender.com/tcp/443/wss`
             ]
         },
         connectionManager: {
