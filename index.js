@@ -40,11 +40,14 @@ function cleanExpiredDrops() {
     }
 }
 
-function handleDropProtocol(data) {
+/**
+ * PROTOCOLO STORE: Cliente envía, Faro almacena. Fire-and-forget (sin respuesta).
+ * Formato del mensaje: <hexBoxId> <base64Payload>
+ */
+function handleDropStore(data) {
     const { stream } = data;
-
-    // Leemos todo el mensaje del stream
     const chunks = [];
+
     const reader = async () => {
         try {
             for await (const chunk of stream.source) {
@@ -53,82 +56,78 @@ function handleDropProtocol(data) {
 
             const message = toString(new Uint8Array(Buffer.concat(chunks)));
             const spaceIdx = message.indexOf(' ');
-            if (spaceIdx === -1) {
-                await sendResponse(stream, 'ERROR INVALID_COMMAND');
-                return;
+            if (spaceIdx === -1) return;
+
+            const boxId = message.substring(0, spaceIdx);
+            const payload = message.substring(spaceIdx + 1);
+
+            if (payload.length > MAX_DROP_SIZE) return;
+
+            if (!dropBoxes.has(boxId)) {
+                dropBoxes.set(boxId, []);
+            }
+            const box = dropBoxes.get(boxId);
+
+            if (box.length >= MAX_DROPS_PER_BOX) {
+                box.shift(); // Descartamos el más viejo
             }
 
-            const command = message.substring(0, spaceIdx);
-            const rest = message.substring(spaceIdx + 1);
-
-            if (command === 'STORE') {
-                // Formato: STORE <hexBoxId> <base64Payload>
-                const parts = rest.split(' ', 2);
-                if (parts.length < 2) {
-                    await sendResponse(stream, 'ERROR INVALID_STORE');
-                    return;
-                }
-
-                const [boxId, payload] = parts;
-
-                // Verificar tamaño
-                if (payload.length > MAX_DROP_SIZE) {
-                    await sendResponse(stream, 'ERROR TOO_LARGE');
-                    return;
-                }
-
-                // Almacenar
-                if (!dropBoxes.has(boxId)) {
-                    dropBoxes.set(boxId, []);
-                }
-                const box = dropBoxes.get(boxId);
-
-                if (box.length >= MAX_DROPS_PER_BOX) {
-                    // Descartamos el más viejo
-                    box.shift();
-                }
-
-                box.push({ payload, timestamp: Date.now() });
-                console.log(`[Buzón] 📥 Drop almacenado en buzón ${boxId.substring(0, 8)}... (${box.length} total)`);
-                await sendResponse(stream, 'OK STORED');
-
-            } else if (command === 'FETCH') {
-                // Formato: FETCH <hexBoxId>
-                const boxId = rest.trim();
-                const box = dropBoxes.get(boxId);
-
-                if (!box || box.length === 0) {
-                    await sendResponse(stream, 'OK EMPTY');
-                    return;
-                }
-
-                // Entregamos el primer drop (FIFO) y lo borramos
-                const drop = box.shift();
-                if (box.length === 0) {
-                    dropBoxes.delete(boxId);
-                }
-
-                console.log(`[Buzón] 📤 Drop entregado desde buzón ${boxId.substring(0, 8)}...`);
-                await sendResponse(stream, `OK DATA ${drop.payload}`);
-
-            } else {
-                await sendResponse(stream, 'ERROR UNKNOWN_COMMAND');
-            }
+            box.push({ payload, timestamp: Date.now() });
+            console.log(`[Buzón] 📥 Drop almacenado en buzón ${boxId.substring(0, 8)}... (${box.length} total)`);
         } catch (e) {
-            // Stream cerrado o error de red — ignorar silenciosamente
+            // Stream cerrado — normal
         }
     };
-
     reader();
 }
 
-async function sendResponse(stream, message) {
-    try {
-        const encoded = fromString(message);
-        await stream.sink([encoded]);
-    } catch (e) {
-        // Sink ya cerrado
-    }
+/**
+ * PROTOCOLO FETCH: Cliente abre stream, Faro responde con el drop (o vacío).
+ * El cliente envía el boxId, y luego el Faro responde escribiendo el payload.
+ * Usamos un patrón "read boxId from source, write response to sink".
+ * PERO: como los streams son unidireccionales en la práctica,
+ * el boxId viene codificado en la dirección del protocolo.
+ * Formato: Cliente conecta, Faro envía el primer drop disponible o "EMPTY".
+ */
+function handleDropFetch(data) {
+    const { stream } = data;
+    const chunks = [];
+
+    const reader = async () => {
+        try {
+            // Leer el boxId del cliente
+            for await (const chunk of stream.source) {
+                chunks.push(chunk.subarray());
+            }
+
+            const boxId = toString(new Uint8Array(Buffer.concat(chunks))).trim();
+            if (!boxId) return;
+
+            const box = dropBoxes.get(boxId);
+
+            if (!box || box.length === 0) {
+                // Responder con EMPTY
+                try {
+                    await stream.sink([fromString('EMPTY')]);
+                } catch (e) {}
+                return;
+            }
+
+            // Entregar primer drop (FIFO) y borrarlo
+            const drop = box.shift();
+            if (box.length === 0) {
+                dropBoxes.delete(boxId);
+            }
+
+            console.log(`[Buzón] 📤 Drop entregado desde buzón ${boxId.substring(0, 8)}...`);
+            try {
+                await stream.sink([fromString(drop.payload)]);
+            } catch (e) {}
+        } catch (e) {
+            // Stream cerrado
+        }
+    };
+    reader();
 }
 
 
@@ -136,7 +135,7 @@ async function sendResponse(stream, message) {
 // ARRANQUE DEL FARO
 // ==========================================
 async function startFaro() {
-    console.log('--- FARO v4.1 (Buzón Ciego) INICIANDO ---');
+    console.log('--- FARO v4.2 (Buzón Ciego Split) INICIANDO ---');
     const port = process.env.PORT || 10000;
 
     // Carga de identidad persistente
@@ -155,7 +154,7 @@ async function startFaro() {
 
     const node = await createLibp2p({
         ...(privateKey ? { privateKey } : {}),
-        nodeInfo: { name: 'whispernode-faro', version: '4.1.0' },
+        nodeInfo: { name: 'whispernode-faro', version: '4.2.0' },
         addresses: {
             listen: [`/ip4/0.0.0.0/tcp/${port}/ws`],
             announce: [`/dns4/faro-whisper.onrender.com/tcp/443/wss`]
@@ -185,13 +184,14 @@ async function startFaro() {
         }
     });
 
-    // Registrar protocolo de buzón ciego
-    await node.handle('/wsmp/drop/1.0.0', handleDropProtocol);
+    // Registrar protocolos de buzón (separados para compatibilidad con streams unidireccionales)
+    await node.handle('/wsmp/drop/store/1.0.0', handleDropStore);
+    await node.handle('/wsmp/drop/fetch/1.0.0', handleDropFetch);
 
     await node.start();
-    console.log(`\n🚀 FARO v4.1 ONLINE (con Buzón Ciego)`);
+    console.log(`\n🚀 FARO v4.2 ONLINE (Buzón Ciego Split)`);
     console.log(`📍 PeerID: ${node.peerId.toString()}`);
-    console.log(`📬 Protocolo de buzón: /wsmp/drop/1.0.0`);
+    console.log(`📬 Protocolos: /wsmp/drop/store/1.0.0, /wsmp/drop/fetch/1.0.0`);
 
     // Exportar clave si es nueva
     if (!privateKey) {
