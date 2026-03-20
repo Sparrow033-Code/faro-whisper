@@ -7,8 +7,9 @@ import { kadDHT } from '@libp2p/kad-dht';
 import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
-import { privateKeyFromProtobuf } from '@libp2p/crypto/keys';
+import { privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys';
 import { fromString } from 'uint8arrays/from-string';
+import { toString } from 'uint8arrays/to-string';
 
 
 async function startFaro() {
@@ -71,7 +72,10 @@ async function startFaro() {
         connectionEncrypters: [noise()],
         streamMuxers: [yamux()],
         services: {
-            identify: identify(),
+            identify: identify({
+                agentVersion: 'whispernode-faro/1.0.0',
+                protocolVersion: 'ipfs/0.1.0'
+            }),
             ping: ping(),
             relay: circuitRelayServer({
                 reservations: {
@@ -91,6 +95,12 @@ async function startFaro() {
             })
         }
     });
+
+    if (!process.env.FARO_KEY || !privateKey) {
+        // Log extra para que el usuario pueda copiar la nueva clave generada
+        const exported = privateKeyToProtobuf(node.components.privateKey);
+        console.log(`\n🔑 NUEVA FARO_KEY GENERADA (Para Render):\n${toString(exported, 'base64pad')}\n`);
+    }
 
     await node.start();
     console.log(`\n🚀 Faro WhisperNode v3.2.1 desplegado con éxito!`);
