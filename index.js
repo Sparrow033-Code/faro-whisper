@@ -12,13 +12,134 @@ import { fromString } from 'uint8arrays/from-string';
 import { toString } from 'uint8arrays/to-string';
 
 
+// ==========================================
+// BUZÓN CIEGO (Dead Drop Store)
+// ==========================================
+const MAX_DROPS_PER_BOX = 100;
+const MAX_DROP_SIZE = 65536; // 64KB
+const DROP_TTL_MS = 24 * 60 * 60 * 1000; // 24 horas
+
+// Map<boxId, Array<{payload, timestamp}>>
+const dropBoxes = new Map();
+
+function cleanExpiredDrops() {
+    const now = Date.now();
+    let cleaned = 0;
+    for (const [boxId, drops] of dropBoxes.entries()) {
+        const valid = drops.filter(d => (now - d.timestamp) < DROP_TTL_MS);
+        if (valid.length === 0) {
+            dropBoxes.delete(boxId);
+            cleaned++;
+        } else if (valid.length < drops.length) {
+            dropBoxes.set(boxId, valid);
+            cleaned += drops.length - valid.length;
+        }
+    }
+    if (cleaned > 0) {
+        console.log(`[Buzón] 🧹 Limpiados ${cleaned} drops expirados. Buzones activos: ${dropBoxes.size}`);
+    }
+}
+
+function handleDropProtocol(data) {
+    const { stream } = data;
+
+    // Leemos todo el mensaje del stream
+    const chunks = [];
+    const reader = async () => {
+        try {
+            for await (const chunk of stream.source) {
+                chunks.push(chunk.subarray());
+            }
+
+            const message = toString(new Uint8Array(Buffer.concat(chunks)));
+            const spaceIdx = message.indexOf(' ');
+            if (spaceIdx === -1) {
+                await sendResponse(stream, 'ERROR INVALID_COMMAND');
+                return;
+            }
+
+            const command = message.substring(0, spaceIdx);
+            const rest = message.substring(spaceIdx + 1);
+
+            if (command === 'STORE') {
+                // Formato: STORE <hexBoxId> <base64Payload>
+                const parts = rest.split(' ', 2);
+                if (parts.length < 2) {
+                    await sendResponse(stream, 'ERROR INVALID_STORE');
+                    return;
+                }
+
+                const [boxId, payload] = parts;
+
+                // Verificar tamaño
+                if (payload.length > MAX_DROP_SIZE) {
+                    await sendResponse(stream, 'ERROR TOO_LARGE');
+                    return;
+                }
+
+                // Almacenar
+                if (!dropBoxes.has(boxId)) {
+                    dropBoxes.set(boxId, []);
+                }
+                const box = dropBoxes.get(boxId);
+
+                if (box.length >= MAX_DROPS_PER_BOX) {
+                    // Descartamos el más viejo
+                    box.shift();
+                }
+
+                box.push({ payload, timestamp: Date.now() });
+                console.log(`[Buzón] 📥 Drop almacenado en buzón ${boxId.substring(0, 8)}... (${box.length} total)`);
+                await sendResponse(stream, 'OK STORED');
+
+            } else if (command === 'FETCH') {
+                // Formato: FETCH <hexBoxId>
+                const boxId = rest.trim();
+                const box = dropBoxes.get(boxId);
+
+                if (!box || box.length === 0) {
+                    await sendResponse(stream, 'OK EMPTY');
+                    return;
+                }
+
+                // Entregamos el primer drop (FIFO) y lo borramos
+                const drop = box.shift();
+                if (box.length === 0) {
+                    dropBoxes.delete(boxId);
+                }
+
+                console.log(`[Buzón] 📤 Drop entregado desde buzón ${boxId.substring(0, 8)}...`);
+                await sendResponse(stream, `OK DATA ${drop.payload}`);
+
+            } else {
+                await sendResponse(stream, 'ERROR UNKNOWN_COMMAND');
+            }
+        } catch (e) {
+            // Stream cerrado o error de red — ignorar silenciosamente
+        }
+    };
+
+    reader();
+}
+
+async function sendResponse(stream, message) {
+    try {
+        const encoded = fromString(message);
+        await stream.sink([encoded]);
+    } catch (e) {
+        // Sink ya cerrado
+    }
+}
+
+
+// ==========================================
+// ARRANQUE DEL FARO
+// ==========================================
 async function startFaro() {
-    console.log('--- FARO v4.0 INICIANDO ---');
+    console.log('--- FARO v4.1 (Buzón Ciego) INICIANDO ---');
     const port = process.env.PORT || 10000;
 
-    // ==========================================
-    // CARGA DE IDENTIDAD PERSISTENTE
-    // ==========================================
+    // Carga de identidad persistente
     let privateKey;
     const faroKeyEnv = process.env.FARO_KEY;
 
@@ -29,18 +150,12 @@ async function startFaro() {
             console.log('✅ Identidad persistente cargada desde FARO_KEY.');
         } catch (e) {
             console.error('❌ Error cargando FARO_KEY:', e.message);
-            console.warn('⚠️ Se generará una identidad nueva.');
         }
-    } else {
-        console.warn('⚠️ FARO_KEY no encontrada. Se generará una identidad nueva.');
     }
 
-    // ==========================================
-    // CREAR NODO
-    // ==========================================
     const node = await createLibp2p({
         ...(privateKey ? { privateKey } : {}),
-        nodeInfo: { name: 'whispernode-faro', version: '4.0.0' },
+        nodeInfo: { name: 'whispernode-faro', version: '4.1.0' },
         addresses: {
             listen: [`/ip4/0.0.0.0/tcp/${port}/ws`],
             announce: [`/dns4/faro-whisper.onrender.com/tcp/443/wss`]
@@ -48,7 +163,7 @@ async function startFaro() {
         connectionManager: {
             maxConnections: 5000,
             minConnections: 10,
-            maxIdleTime: 24 * 60 * 60 * 1000, // 24 horas — no cerrar conexiones inactivas
+            maxIdleTime: 24 * 60 * 60 * 1000,
         },
         transports: [
             tcp(),
@@ -70,27 +185,27 @@ async function startFaro() {
         }
     });
 
-    await node.start();
-    console.log(`\n🚀 FARO v4.0 ONLINE!`);
-    console.log(`📍 PeerID: ${node.peerId.toString()}`);
+    // Registrar protocolo de buzón ciego
+    await node.handle('/wsmp/drop/1.0.0', handleDropProtocol);
 
-    // ==========================================
-    // EXPORTAR CLAVE SI ES NUEVA
-    // ==========================================
+    await node.start();
+    console.log(`\n🚀 FARO v4.1 ONLINE (con Buzón Ciego)`);
+    console.log(`📍 PeerID: ${node.peerId.toString()}`);
+    console.log(`📬 Protocolo de buzón: /wsmp/drop/1.0.0`);
+
+    // Exportar clave si es nueva
     if (!privateKey) {
         try {
-            // Accedemos a la clave privada generada internamente por libp2p
-            const internalKey = node.components.privateKey;
-            const exported = privateKeyToProtobuf(internalKey);
-            const b64Key = toString(exported, 'base64pad');
+            const exported = privateKeyToProtobuf(node.components.privateKey);
             console.log(`\n${'='.repeat(60)}`);
-            console.log(`🔑 COPIA ESTA CLAVE Y PONLA EN RENDER COMO "FARO_KEY":`);
-            console.log(b64Key);
+            console.log(`🔑 NUEVA FARO_KEY PARA RENDER:`);
+            console.log(toString(exported, 'base64pad'));
             console.log(`${'='.repeat(60)}\n`);
-        } catch (e) {
-            console.error('No se pudo exportar la clave:', e.message);
-        }
+        } catch (e) {}
     }
+
+    // Limpieza de drops expirados cada hora
+    setInterval(cleanExpiredDrops, 60 * 60 * 1000);
 
     node.addEventListener('peer:connect', (evt) => {
         console.log(`[Connect] 🤝 ${evt.detail.toString().slice(0, 16)}...`);
