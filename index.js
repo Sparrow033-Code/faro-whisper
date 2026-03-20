@@ -12,62 +12,53 @@ import { createFromPrivKey } from '@libp2p/peer-id-factory';
 import { fromString } from 'uint8arrays/from-string';
 import { toString } from 'uint8arrays/to-string';
 
-
 async function startFaro() {
     const port = process.env.PORT || 10000;
-
-    console.log('🗼 Iniciando Faro (Fase de Estabilización)...');
+    console.log('🗼 Iniciando Faro (Fase de Estabilización V2)...');
     
     let privateKey;
-    // IGNORAR FARO_KEY si tiene una longitud sospechosa (como la de 148 bytes que está chocando)
     const currentFaroKey = process.env.FARO_KEY;
-    if (currentFaroKey && currentFaroKey.length > 50 && currentFaroKey.length < 140) {
+
+    // Si la clave existe, intentamos cargarla, pero con cuidado extremo
+    if (currentFaroKey && currentFaroKey.length > 50) {
         try {
-            console.log('🗼 Cargando clave FARO_KEY desde Render...');
-            privateKey = privateKeyFromProtobuf(fromString(currentFaroKey, 'base64pad'));
+            const buf = fromString(currentFaroKey, 'base64pad');
+            // Si mide 148 bytes binarios, sabemos por experiencia que está corrupta
+            if (buf.length === 148) {
+                throw new Error("Clave de 148 bytes detectada como CORRUPTA (procede de un formato incompatible).");
+            }
+            privateKey = privateKeyFromProtobuf(buf);
             console.log('✅ FARO_KEY cargada en memoria.');
         } catch (e) {
-            console.error('❌ La clave FARO_KEY guardada en Render sigue fallando:', e.message);
+            console.error('⚠️ Ignorando FARO_KEY de Render:', e.message);
         }
     }
 
     if (!privateKey) {
-        console.warn('⚠️ No hay clave válida. Generando nueva identidad limpia...');
+        console.warn('⚠️ Generando nueva identidad limpia...');
         privateKey = await generateKeyPair('Ed25519');
-        // Parche de compatibilidad por si acaso
-        if (privateKey.publicKey && !privateKey.public) {
-            privateKey.public = privateKey.publicKey;
-        }
-    } else {
-        // Aseguramos que tenga .public si se cargó de FARO_KEY
-        if (privateKey.publicKey && !privateKey.public) {
-            privateKey.public = privateKey.publicKey;
-        }
     }
 
-    // Crear el PeerId de forma segura
+    // Parche de compatibilidad obligatorio
+    if (privateKey.publicKey && !privateKey.public) privateKey.public = privateKey.publicKey;
+
+    // Crear el PeerId de forma segura ANTES de inicializar libp2p
     const peerId = await createFromPrivKey(privateKey);
     console.log(`📍 PeerID Final: ${peerId.toString()}`);
 
     const node = await createLibp2p({
         peerId,
-        nodeInfo: {
-            name: 'whispernode-faro',
-            version: '3.2.5'
-        },
+        nodeInfo: { name: 'whispernode-faro', version: '3.2.6' },
         addresses: {
             listen: [`/ip4/0.0.0.0/tcp/${port}/ws`],
             announce: [`/dns4/faro-whisper.onrender.com/tcp/443/wss`]
         },
-        transports: [
-            tcp(),
-            webSockets({ filter: (addrs) => addrs })
-        ],
+        transports: [tcp(), webSockets({ filter: (addrs) => addrs })],
         connectionEncrypters: [noise()],
         streamMuxers: [yamux()],
         services: {
             identify: identify({
-                agentVersion: 'whispernode-faro/3.2.5',
+                agentVersion: 'whispernode-faro/3.2.6',
                 protocolVersion: 'ipfs/0.1.0'
             }),
             ping: ping(),
@@ -85,8 +76,8 @@ async function startFaro() {
     await node.start();
     console.log(`\n🚀 FARO DESPLEGADO CON ÉXITO!`);
     
-    // Mostramos la clave que debe ir en Render si queremos persistencia
-    if (!currentFaroKey || currentFaroKey.length >= 140) {
+    // Si la clave de Render era mala o no existía, mostramos la nueva
+    if (!currentFaroKey || fromString(currentFaroKey, 'base64pad').length === 148) {
         const exported = privateKeyToProtobuf(privateKey);
         console.log(`\n🔑 COPIA ESTO Y PONLO EN RENDER (FARO_KEY):\n${toString(exported, 'base64pad')}\n`);
     }
@@ -96,12 +87,10 @@ async function startFaro() {
     });
 
     const stop = async () => {
-        console.log('\n🛑 Apagando...');
         await node.stop();
         process.exit(0);
     };
-    process.on('SIGINT', stop);
-    process.on('SIGTERM', stop);
+    process.on('SIGINT', stop); process.on('SIGTERM', stop);
 }
 
 startFaro().catch(err => {
