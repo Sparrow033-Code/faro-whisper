@@ -18,47 +18,48 @@ const DROP_TTL_MS = 24 * 60 * 60 * 1000;
 function logStatus() {
     let totalMessages = 0;
     for (const box of dropBoxes.values()) totalMessages += box.length;
-    console.log(`[ESTADO] 📊 Buzones: ${dropBoxes.size} | Mensajes: ${totalMessages} | IDs: ${Array.from(dropBoxes.keys()).map(id => id.substring(0, 8)).join(', ')}`);
+    console.log(`[ESTADO] 📊 Buzones: ${dropBoxes.size} | Mensajes Pantalla: ${totalMessages}`);
+    if (dropBoxes.size > 0) {
+        console.log(`[ESTADO] 🔍 IDs en memoria: ${Array.from(dropBoxes.keys()).join(', ')}`);
+    }
 }
 
 async function handleDropStore({ stream }) {
-    console.log(`[Buzón] 🔌 Conexión STORE abierta...`);
+    console.log(`[Buzón] 📥 Intento de STORE detectado...`);
     const chunks = [];
     try {
         for await (const chunk of stream.source) {
             chunks.push(chunk.subarray());
         }
-        const message = toString(new Uint8Array(Buffer.concat(chunks)));
-        const spaceIdx = message.indexOf(' ');
-        if (spaceIdx === -1) throw new Error('Formato inválido');
+        const rawBody = toString(new Uint8Array(Buffer.concat(chunks)));
+        const [boxId, payload] = rawBody.split(' ');
 
-        const boxId = message.substring(0, spaceIdx).trim();
-        const payload = message.substring(spaceIdx + 1).trim();
+        if (!boxId || !payload) throw new Error('Cuerpo de mensaje malformado');
 
         if (!dropBoxes.has(boxId)) dropBoxes.set(boxId, []);
         const box = dropBoxes.get(boxId);
         if (box.length >= MAX_DROPS_PER_BOX) box.shift();
         box.push({ payload, timestamp: Date.now() });
 
-        console.log(`[Buzón] ✅ ALMACENADO en ${boxId.substring(0, 8)}...`);
+        console.log(`[Buzón] ✅ ALMACENADO: ${boxId} (Total en buzón: ${box.length})`);
     } catch (e) {
         console.error(`[Buzón] ❌ Error en STORE: ${e.message}`);
     }
 }
 
 async function handleDropFetch({ stream }) {
-    console.log(`[Buzón] 🔌 Conexión FETCH abierta...`);
+    console.log(`[Buzón] 🔍 Intento de FETCH detectado...`);
     const chunks = [];
     try {
         for await (const chunk of stream.source) {
             chunks.push(chunk.subarray());
         }
         const boxId = toString(new Uint8Array(Buffer.concat(chunks))).trim();
-        if (!boxId) throw new Error('BoxId vacío');
+        console.log(`[Buzón] ❓ Buscando mensajes para: ${boxId}`);
 
         const box = dropBoxes.get(boxId);
         if (!box || box.length === 0) {
-            console.log(`[Buzón] 🔍 FETCH vacío en ${boxId.substring(0, 8)}...`);
+            console.log(`[Buzón] 💨 Buzón vacío para ${boxId}`);
             await stream.sink([fromString('EMPTY')]);
             return;
         }
@@ -66,7 +67,7 @@ async function handleDropFetch({ stream }) {
         const drop = box.shift();
         if (box.length === 0) dropBoxes.delete(boxId);
 
-        console.log(`[Buzón] 📤 ENTREGADO desde ${boxId.substring(0, 8)}...`);
+        console.log(`[Buzón] 📤 ENTREGADO: ${boxId}`);
         await stream.sink([fromString(drop.payload)]);
     } catch (e) {
         console.error(`[Buzón] ❌ Error en FETCH: ${e.message}`);
@@ -74,7 +75,7 @@ async function handleDropFetch({ stream }) {
 }
 
 async function startFaro() {
-    console.log('--- FARO v4.7 ---');
+    console.log('--- FARO v4.8 (Modo Diagnóstico Total) ---');
     const port = process.env.PORT || 10000;
 
     let privateKey;
@@ -104,12 +105,16 @@ async function startFaro() {
     await node.handle('/wsmp/drop/store/1.0.0', handleDropStore);
     await node.handle('/wsmp/drop/fetch/1.0.0', handleDropFetch);
 
+    node.addEventListener('peer:connect', (evt) => {
+        console.log(`[P2P] 🤝 Conexión establecida con: ${evt.detail.toString()}`);
+    });
+
     await node.start();
-    console.log(`🚀 FARO v4.7 ONLINE | PeerID: ${node.peerId.toString()}`);
+    console.log(`🚀 FARO v4.8 ONLINE | PeerID: ${node.peerId.toString()}`);
     setInterval(logStatus, 60000);
 }
 
 startFaro().catch(err => {
-    console.error('❌ ERROR:', err);
+    console.error('❌ ERROR FATAL:', err);
     process.exit(1);
 });
