@@ -25,12 +25,24 @@ function logStatus() {
 }
 
 async function handleDropStore(data) {
-    const stream = data.stream || data;
-    console.log(`[Buzón] 📥 Nueva conexión STORE`);
+    const stream = data.stream;
+    const peer = data.connection ? data.connection.remotePeer.toString().substring(0, 16) : '?';
+    console.log(`[Buzón] 📥 Nueva conexión STORE desde ${peer}`);
     try {
+        // Debug: inspeccionar estructura del stream
+        if (!stream) {
+            console.error(`[Buzón] ❌ STORE: stream es undefined. data keys: ${Object.keys(data)}`);
+            return;
+        }
+        if (!stream.source) {
+            console.error(`[Buzón] ❌ STORE: stream.source undefined. stream keys: ${Object.keys(stream)}, proto: ${Object.getOwnPropertyNames(Object.getPrototypeOf(stream)).slice(0,10)}`);
+            return;
+        }
+
         const chunks = [];
         for await (const chunk of stream.source) {
-            chunks.push(chunk.subarray());
+            const bytes = chunk.subarray ? chunk.subarray() : (chunk.slice ? chunk.slice() : new Uint8Array(chunk));
+            chunks.push(bytes);
         }
         if (chunks.length === 0) {
             console.log(`[Buzón] ⚠️ STORE: 0 chunks recibidos.`);
@@ -45,10 +57,16 @@ async function handleDropStore(data) {
         }
 
         const rawBody = toString(combined).trim();
-        const [boxId, payloadB64] = [rawBody.split(' ')[0], rawBody.split(' ').slice(1).join(' ')];
+        const spaceIdx = rawBody.indexOf(' ');
+        if (spaceIdx === -1) {
+            console.log(`[Buzón] ⚠️ STORE: Formato inválido (sin espacio separador).`);
+            return;
+        }
+        const boxId = rawBody.substring(0, spaceIdx);
+        const payloadB64 = rawBody.substring(spaceIdx + 1);
 
         if (!boxId || !payloadB64) {
-            console.log(`[Buzón] ⚠️ STORE: Formato inválido (boxId o payload vacío).`);
+            console.log(`[Buzón] ⚠️ STORE: boxId o payload vacío.`);
             return;
         }
 
@@ -56,21 +74,33 @@ async function handleDropStore(data) {
         const box = dropBoxes.get(boxId);
         if (box.length >= MAX_DROPS_PER_BOX) box.shift();
         box.push({ payload: payloadB64, timestamp: Date.now() });
-        console.log(`[Buzón] ✅ ALMACENADO en ID: ${boxId.substring(0, 8)}... (${payloadB64.length} chars)`);
+        console.log(`[Buzón] ✅ ALMACENADO en ID: ${boxId.substring(0, 8)}... (${payloadB64.length} chars) desde ${peer}`);
     } catch (e) {
         console.error(`[Buzón] ❌ Error STORE: ${e.message}`);
+        console.error(`[Buzón] ❌ Stack: ${e.stack}`);
     } finally {
         try { await stream.close(); } catch (e) {}
     }
 }
 
 async function handleDropFetch(data) {
-    const stream = data.stream || data;
-    console.log(`[Buzón] 🔍 Nueva conexión FETCH`);
+    const stream = data.stream;
+    const peer = data.connection ? data.connection.remotePeer.toString().substring(0, 16) : '?';
+    console.log(`[Buzón] 🔍 Nueva conexión FETCH desde ${peer}`);
     try {
+        if (!stream) {
+            console.error(`[Buzón] ❌ FETCH: stream es undefined. data keys: ${Object.keys(data)}`);
+            return;
+        }
+        if (!stream.source) {
+            console.error(`[Buzón] ❌ FETCH: stream.source undefined. stream keys: ${Object.keys(stream)}, proto: ${Object.getOwnPropertyNames(Object.getPrototypeOf(stream)).slice(0,10)}`);
+            return;
+        }
+
         const chunks = [];
         for await (const chunk of stream.source) {
-            chunks.push(chunk.subarray());
+            const bytes = chunk.subarray ? chunk.subarray() : (chunk.slice ? chunk.slice() : new Uint8Array(chunk));
+            chunks.push(bytes);
         }
         const combined = new Uint8Array(chunks.reduce((acc, c) => acc + c.length, 0));
         let offset = 0;
@@ -80,18 +110,20 @@ async function handleDropFetch(data) {
         }
 
         const boxId = toString(combined).trim();
-        console.log(`[Buzón] 🔍 FETCH solicitado: ${boxId.substring(0, 8)}...`);
+        console.log(`[Buzón] 🔍 FETCH buscando: ${boxId.substring(0, 8)}...`);
         const box = dropBoxes.get(boxId);
         if (!box || box.length === 0) {
             await stream.sink([fromString('EMPTY')]);
+            console.log(`[Buzón] 📭 Buzón ${boxId.substring(0, 8)}... vacío`);
         } else {
             const drop = box.shift();
             if (box.length === 0) dropBoxes.delete(boxId);
             await stream.sink([fromString(drop.payload)]);
-            console.log(`[Buzón] 📤 DESPACHADO: ${boxId.substring(0, 8)}...`);
+            console.log(`[Buzón] 📤 DESPACHADO: ${boxId.substring(0, 8)}... (${drop.payload.length} chars)`);
         }
     } catch (e) {
         console.error(`[Buzón] ❌ Error FETCH: ${e.message}`);
+        console.error(`[Buzón] ❌ Stack: ${e.stack}`);
     } finally {
         try { await stream.close(); } catch (e) {}
     }
