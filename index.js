@@ -21,7 +21,7 @@ function logStatus() {
         totalMessages += msgs.length;
         boxSummaries.push(`${id.substring(0, 8)}(${msgs.length})`);
     }
-    console.log(`[HEARTBEAT] 💓 FARO V7.1 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
+    console.log(`[HEARTBEAT] 💓 FARO V7.2 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
 }
 
 // Función helper para leer TODOS los bytes de un stream de libp2p v3
@@ -108,20 +108,24 @@ async function writeBytes(streamObj, data) {
 }
 
 async function handleDropStore(data) {
+    console.log(`[Buzón] 📥 STORE handler invocado!`);
     // En libp2p v3/yamux, data puede ser el stream directamente o {stream, connection}
     const stream = data.stream || data;
     console.log(`[Buzón] 📥 STORE | src=${typeof stream.source} srcCtor=${stream.source?.constructor?.name} asyncIter=${typeof stream[Symbol.asyncIterator]}`);
     try {
         const rawBytes = await readAllBytes(stream);
+        console.log(`[Buzón] 📥 STORE: ${rawBytes.length} bytes leídos del stream`);
         if (rawBytes.length === 0) {
             console.log(`[Buzón] ⚠️ STORE: 0 bytes recibidos.`);
+            try { await writeBytes(stream, fromString('ERR_EMPTY')); } catch(e) {}
             return;
         }
 
         const rawBody = toString(rawBytes).trim();
         const spaceIdx = rawBody.indexOf(' ');
         if (spaceIdx === -1) {
-            console.log(`[Buzón] ⚠️ STORE: Formato inválido (sin espacio). Body: ${rawBody.substring(0, 40)}...`);
+            console.log(`[Buzón] ⚠️ STORE: Formato inválido (sin espacio). Body: ${rawBody.substring(0, 60)}...`);
+            try { await writeBytes(stream, fromString('ERR_FORMAT')); } catch(e) {}
             return;
         }
         const boxId = rawBody.substring(0, spaceIdx);
@@ -129,6 +133,7 @@ async function handleDropStore(data) {
 
         if (!boxId || !payloadB64) {
             console.log(`[Buzón] ⚠️ STORE: boxId o payload vacío.`);
+            try { await writeBytes(stream, fromString('ERR_EMPTY_FIELDS')); } catch(e) {}
             return;
         }
 
@@ -137,6 +142,11 @@ async function handleDropStore(data) {
         if (box.length >= MAX_DROPS_PER_BOX) box.shift();
         box.push({ payload: payloadB64, timestamp: Date.now() });
         console.log(`[Buzón] ✅ ALMACENADO en ID: ${boxId.substring(0, 8)}... (${payloadB64.length} chars)`);
+
+        // Enviar confirmación al cliente
+        try { await writeBytes(stream, fromString('OK')); } catch(e) {
+            console.log(`[Buzón] ⚠️ No se pudo enviar OK (stream ya cerrado): ${e.message}`);
+        }
     } catch (e) {
         console.error(`[Buzón] ❌ Error STORE: ${e.message}`);
     } finally {
@@ -169,7 +179,7 @@ async function handleDropFetch(data) {
 }
 
 async function startFaro() {
-    console.log('--- FARO v7.1 (Stream Debug) ---');
+    console.log('--- FARO v7.2 (STORE Confirmation) ---');
     const port = process.env.PORT || 10000;
 
     let privateKey;
