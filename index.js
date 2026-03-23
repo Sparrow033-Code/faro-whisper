@@ -21,41 +21,80 @@ function logStatus() {
         totalMessages += msgs.length;
         boxSummaries.push(`${id.substring(0, 8)}(${msgs.length})`);
     }
-    console.log(`[HEARTBEAT] 💓 FARO V7.0 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
+    console.log(`[HEARTBEAT] 💓 FARO V7.1 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
 }
 
-async function handleDropStore(data) {
-    // En libp2p v3/yamux, data ES el stream directamente (no {stream, connection})
-    const stream = data.stream || data;
-    console.log(`[Buzón] 📥 Nueva conexión STORE (protocol: ${stream.protocol || data.protocol || '?'})`);
-    try {
-        // source/sink son getters del prototipo, no propiedades enumerables
-        if (typeof stream.source === 'undefined' && typeof stream[Symbol.asyncIterator] === 'undefined') {
-            console.error(`[Buzón] ❌ STORE: sin source. keys: ${Object.keys(data)}, proto: ${Object.getOwnPropertyNames(Object.getPrototypeOf(data)).join(',')}`);
-            return;
-        }
+// Función helper para leer TODOS los bytes de un stream de libp2p v3
+// Maneja múltiples APIs: stream.source, stream[Symbol.asyncIterator], stream.readable
+async function readAllBytes(streamObj) {
+    const chunks = [];
 
-        const chunks = [];
-        for await (const chunk of stream.source) {
+    // Intentar obtener una fuente iterable
+    let source = null;
+    if (streamObj.source && typeof streamObj.source[Symbol.asyncIterator] === 'function') {
+        source = streamObj.source;
+    } else if (typeof streamObj[Symbol.asyncIterator] === 'function') {
+        source = streamObj;
+    } else if (streamObj.source && typeof streamObj.source === 'function') {
+        // Algunos wrappers usan source() como función
+        const s = streamObj.source();
+        if (s && typeof s[Symbol.asyncIterator] === 'function') source = s;
+    }
+
+    if (source) {
+        for await (const chunk of source) {
             const bytes = chunk.subarray ? chunk.subarray() : (chunk.slice ? chunk.slice() : new Uint8Array(chunk));
             chunks.push(bytes);
         }
-        if (chunks.length === 0) {
-            console.log(`[Buzón] ⚠️ STORE: 0 chunks recibidos.`);
+    } else {
+        // ÚLTIMO RECURSO: leer del readBuffer de yamux directamente
+        console.error(`[Buzón] ⚠️ readAllBytes: sin source iterable. typeof source=${typeof streamObj.source}, constructor=${streamObj.source?.constructor?.name}`);
+        // Intentar prototype chain
+        let proto = Object.getPrototypeOf(streamObj);
+        let depth = 0;
+        while (proto && depth < 5) {
+            const names = Object.getOwnPropertyNames(proto);
+            console.log(`[Buzón] 🔬 proto[${depth}](${proto.constructor?.name}): ${names.join(',')}`);
+            depth++;
+            proto = Object.getPrototypeOf(proto);
+        }
+        throw new Error(`No async iterable source found. typeof source=${typeof streamObj.source}`);
+    }
+
+    if (chunks.length === 0) return new Uint8Array(0);
+    const combined = new Uint8Array(chunks.reduce((acc, c) => acc + c.length, 0));
+    let offset = 0;
+    for (const chunk of chunks) {
+        combined.set(chunk, offset);
+        offset += chunk.length;
+    }
+    return combined;
+}
+
+// Función helper para escribir bytes a un stream
+async function writeBytes(streamObj, data) {
+    if (streamObj.sink && typeof streamObj.sink === 'function') {
+        await streamObj.sink([data]);
+    } else {
+        throw new Error(`No sink function found. typeof sink=${typeof streamObj.sink}`);
+    }
+}
+
+async function handleDropStore(data) {
+    // En libp2p v3/yamux, data puede ser el stream directamente o {stream, connection}
+    const stream = data.stream || data;
+    console.log(`[Buzón] 📥 STORE | src=${typeof stream.source} srcCtor=${stream.source?.constructor?.name} asyncIter=${typeof stream[Symbol.asyncIterator]}`);
+    try {
+        const rawBytes = await readAllBytes(stream);
+        if (rawBytes.length === 0) {
+            console.log(`[Buzón] ⚠️ STORE: 0 bytes recibidos.`);
             return;
         }
 
-        const combined = new Uint8Array(chunks.reduce((acc, c) => acc + c.length, 0));
-        let offset = 0;
-        for (const chunk of chunks) {
-            combined.set(chunk, offset);
-            offset += chunk.length;
-        }
-
-        const rawBody = toString(combined).trim();
+        const rawBody = toString(rawBytes).trim();
         const spaceIdx = rawBody.indexOf(' ');
         if (spaceIdx === -1) {
-            console.log(`[Buzón] ⚠️ STORE: Formato inválido (sin espacio separador).`);
+            console.log(`[Buzón] ⚠️ STORE: Formato inválido (sin espacio). Body: ${rawBody.substring(0, 40)}...`);
             return;
         }
         const boxId = rawBody.substring(0, spaceIdx);
@@ -79,37 +118,20 @@ async function handleDropStore(data) {
 }
 
 async function handleDropFetch(data) {
-    // En libp2p v3/yamux, data ES el stream directamente
     const stream = data.stream || data;
-    console.log(`[Buzón] 🔍 Nueva conexión FETCH`);
+    console.log(`[Buzón] 🔍 FETCH | src=${typeof stream.source} srcCtor=${stream.source?.constructor?.name} asyncIter=${typeof stream[Symbol.asyncIterator]}`);
     try {
-        if (typeof stream.source === 'undefined' && typeof stream[Symbol.asyncIterator] === 'undefined') {
-            console.error(`[Buzón] ❌ FETCH: sin source. keys: ${Object.keys(data)}, proto: ${Object.getOwnPropertyNames(Object.getPrototypeOf(data)).join(',')}`);
-            return;
-        }
-
-        const chunks = [];
-        for await (const chunk of stream.source) {
-            const bytes = chunk.subarray ? chunk.subarray() : (chunk.slice ? chunk.slice() : new Uint8Array(chunk));
-            chunks.push(bytes);
-        }
-        const combined = new Uint8Array(chunks.reduce((acc, c) => acc + c.length, 0));
-        let offset = 0;
-        for (const chunk of chunks) {
-            combined.set(chunk, offset);
-            offset += chunk.length;
-        }
-
-        const boxId = toString(combined).trim();
+        const rawBytes = await readAllBytes(stream);
+        const boxId = toString(rawBytes).trim();
         console.log(`[Buzón] 🔍 FETCH buscando: ${boxId.substring(0, 8)}...`);
         const box = dropBoxes.get(boxId);
         if (!box || box.length === 0) {
-            await stream.sink([fromString('EMPTY')]);
+            await writeBytes(stream, fromString('EMPTY'));
             console.log(`[Buzón] 📭 Buzón ${boxId.substring(0, 8)}... vacío`);
         } else {
             const drop = box.shift();
             if (box.length === 0) dropBoxes.delete(boxId);
-            await stream.sink([fromString(drop.payload)]);
+            await writeBytes(stream, fromString(drop.payload));
             console.log(`[Buzón] 📤 DESPACHADO: ${boxId.substring(0, 8)}... (${drop.payload.length} chars)`);
         }
     } catch (e) {
@@ -120,7 +142,7 @@ async function handleDropFetch(data) {
 }
 
 async function startFaro() {
-    console.log('--- FARO v7.0 (WebSocket Puro — Sin httpServer) ---');
+    console.log('--- FARO v7.1 (Stream Debug) ---');
     const port = process.env.PORT || 10000;
 
     let privateKey;
@@ -130,9 +152,6 @@ async function startFaro() {
         } catch (e) { console.error('❌ Error FARO_KEY:', e.message); }
     }
 
-    // [FIX v7.0] Eliminado httpServer completamente.
-    // libp2p crea su propio servidor WebSocket interno.
-    // Esto garantiza que los upgrades WS se procesan correctamente por libp2p.
     const node = await createLibp2p({
         ...(privateKey ? { privateKey } : {}),
         addresses: {
@@ -140,7 +159,7 @@ async function startFaro() {
             announce: [`/dns4/faro-whisper.onrender.com/tcp/443/wss`]
         },
         transports: [
-            webSockets()  // SIN server option — libp2p gestiona todo
+            webSockets()
         ],
         connectionEncrypters: [noise()],
         streamMuxers: [yamux()],
@@ -156,7 +175,6 @@ async function startFaro() {
         }
     });
 
-    // Logs de conexión para depuración
     node.addEventListener('peer:connect', (evt) => {
         console.log(`[Red] 🤝 Conexión entrante de: ${evt.detail.toString()}`);
     });
@@ -169,9 +187,9 @@ async function startFaro() {
 
     await node.start();
     
-    console.log(`🚀 FARO v7.0 ONLINE | PeerID: ${node.peerId.toString()}`);
-    console.log(`🚀 Puerto ${port} — WebSocket P2P Puro (sin httpServer intermediario)`);
-    console.log(`📋 Protocolos registrados: /wsmp/drop/store/1.0.0, /wsmp/drop/fetch/1.0.0`);
+    console.log(`🚀 FARO v7.1 ONLINE | PeerID: ${node.peerId.toString()}`);
+    console.log(`🚀 Puerto ${port} — WebSocket P2P Puro`);
+    console.log(`📋 Protocolos: /wsmp/drop/store/1.0.0, /wsmp/drop/fetch/1.0.0`);
     
     const addrs = node.getMultiaddrs();
     addrs.forEach(a => console.log(`   📡 ${a.toString()}`));
@@ -179,16 +197,14 @@ async function startFaro() {
     logStatus();
     setInterval(logStatus, 30000);
 
-    // [STAY-ALIVE 2] Gossip Heartbeat (cada 45s)
     setInterval(async () => {
         try {
             await node.services.pubsub.publish('whisper-heartbeat', fromString('KEEP_ALIVE'));
         } catch (e) {}
     }, 45 * 1000);
 
-    // [STAY-ALIVE 3] Log de persistencia (cada 29 min)
     setInterval(() => {
-        console.log("[Stay-Alive] 🛡️ Ciclo de persistencia de 29m completado. El Faro sigue en linea.");
+        console.log("[Stay-Alive] 🛡️ Ciclo de persistencia de 29m completado.");
     }, 29 * 60 * 1000);
 }
 
