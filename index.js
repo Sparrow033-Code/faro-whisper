@@ -12,54 +12,55 @@ import { fromString } from 'uint8arrays/from-string';
 import { toString } from 'uint8arrays/to-string';
 
 const dropBoxes = new Map();
-const MAX_DROPS_PER_BOX = 50;
-const DROP_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_DROPS_PER_BOX = 100;
 
 function logStatus() {
     let totalMessages = 0;
     for (const box of dropBoxes.values()) totalMessages += box.length;
-    console.log(`[ESTADO] 📊 Buzones: ${dropBoxes.size} | Mensajes Pantalla: ${totalMessages}`);
-    if (dropBoxes.size > 0) {
-        console.log(`[ESTADO] 🔍 IDs en memoria: ${Array.from(dropBoxes.keys()).join(', ')}`);
-    }
+    console.log(`[HEARTBEAT] 💓 FARO V4.9 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | Time: ${new Date().toLocaleTimeString()}`);
 }
 
 async function handleDropStore({ stream }) {
-    console.log(`[Buzón] 📥 Intento de STORE detectado...`);
-    const chunks = [];
+    console.log(`[Buzón] 📥 >>> RECIBIENDO STORE...`);
     try {
+        const chunks = [];
         for await (const chunk of stream.source) {
             chunks.push(chunk.subarray());
         }
         const rawBody = toString(new Uint8Array(Buffer.concat(chunks)));
-        const [boxId, payload] = rawBody.split(' ');
+        const parts = rawBody.split(' ');
+        const boxId = parts[0];
+        const payload = parts.slice(1).join(' ');
 
-        if (!boxId || !payload) throw new Error('Cuerpo de mensaje malformado');
+        if (!boxId || !payload) {
+            console.error(`[Buzón] ❌ Malformed: ID=${boxId}, Size=${payload?.length}`);
+            return;
+        }
 
         if (!dropBoxes.has(boxId)) dropBoxes.set(boxId, []);
         const box = dropBoxes.get(boxId);
         if (box.length >= MAX_DROPS_PER_BOX) box.shift();
         box.push({ payload, timestamp: Date.now() });
 
-        console.log(`[Buzón] ✅ ALMACENADO: ${boxId} (Total en buzón: ${box.length})`);
+        console.log(`[Buzón] ✅ ALMACENADO en ID: ${boxId}`);
     } catch (e) {
-        console.error(`[Buzón] ❌ Error en STORE: ${e.message}`);
+        console.error(`[Buzón] ❌ Error crítico STORE: ${e.message}`);
     }
 }
 
 async function handleDropFetch({ stream }) {
-    console.log(`[Buzón] 🔍 Intento de FETCH detectado...`);
-    const chunks = [];
+    console.log(`[Buzón] 🔍 >>> RECIBIENDO FETCH...`);
     try {
+        const chunks = [];
         for await (const chunk of stream.source) {
             chunks.push(chunk.subarray());
         }
         const boxId = toString(new Uint8Array(Buffer.concat(chunks))).trim();
-        console.log(`[Buzón] ❓ Buscando mensajes para: ${boxId}`);
+        console.log(`[Buzón] 🔍 Solicitud para ID: ${boxId}`);
 
         const box = dropBoxes.get(boxId);
         if (!box || box.length === 0) {
-            console.log(`[Buzón] 💨 Buzón vacío para ${boxId}`);
+            console.log(`[Buzón] 💨 Vacío: ${boxId}`);
             await stream.sink([fromString('EMPTY')]);
             return;
         }
@@ -67,15 +68,15 @@ async function handleDropFetch({ stream }) {
         const drop = box.shift();
         if (box.length === 0) dropBoxes.delete(boxId);
 
-        console.log(`[Buzón] 📤 ENTREGADO: ${boxId}`);
+        console.log(`[Buzón] 📤 DESPACHADO: ${boxId}`);
         await stream.sink([fromString(drop.payload)]);
     } catch (e) {
-        console.error(`[Buzón] ❌ Error en FETCH: ${e.message}`);
+        console.error(`[Buzón] ❌ Error crítico FETCH: ${e.message}`);
     }
 }
 
 async function startFaro() {
-    console.log('--- FARO v4.8 (Modo Diagnóstico Total) ---');
+    console.log('--- FARO v4.9 (Omnisciente + Latido 5s) ---');
     const port = process.env.PORT || 10000;
 
     let privateKey;
@@ -106,15 +107,17 @@ async function startFaro() {
     await node.handle('/wsmp/drop/fetch/1.0.0', handleDropFetch);
 
     node.addEventListener('peer:connect', (evt) => {
-        console.log(`[P2P] 🤝 Conexión establecida con: ${evt.detail.toString()}`);
+        console.log(`[P2P] 🔌 Nueva conexión: ${evt.detail.toString()}`);
     });
 
     await node.start();
-    console.log(`🚀 FARO v4.8 ONLINE | PeerID: ${node.peerId.toString()}`);
-    setInterval(logStatus, 60000);
+    console.log(`🚀 FARO v4.9 ONLINE | PeerID: ${node.peerId.toString()}`);
+    
+    // Latido ultrarrápido para forzar vaciado de logs en Render
+    setInterval(logStatus, 5000);
 }
 
 startFaro().catch(err => {
-    console.error('❌ ERROR FATAL:', err);
+    console.error('❌ ERROR GLOVAL:', err);
     process.exit(1);
 });
