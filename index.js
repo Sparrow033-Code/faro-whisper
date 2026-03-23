@@ -10,44 +10,22 @@ import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { privateKeyFromProtobuf } from '@libp2p/crypto/keys';
 import { fromString } from 'uint8arrays/from-string';
 import { toString } from 'uint8arrays/to-string';
-import http from 'http';
 
 const dropBoxes = new Map();
 const MAX_DROPS_PER_BOX = 100;
 
-// Servidor HTTP de Status para diagnóstico desde navegador
-const server = http.createServer((req, res) => {
-    if (req.url === '/status') {
-        let totalMessages = 0;
-        const boxes = [];
-        for (const [id, msgs] of dropBoxes.entries()) {
-            totalMessages += msgs.length;
-            boxes.push({ id: id.substring(0, 8), count: msgs.length });
-        }
-        
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-            status: "ONLINE",
-            version: "5.1",
-            totalBoxes: dropBoxes.size,
-            totalMessages,
-            boxes,
-            time: new Date().toISOString()
-        }, null, 2));
-        return;
-    }
-    res.writeHead(404);
-    res.end("Use /status");
-});
-
 function logStatus() {
     let totalMessages = 0;
-    for (const box of dropBoxes.values()) totalMessages += box.length;
-    console.log(`[HEARTBEAT] 💓 FARO V5.1 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | Time: ${new Date().toLocaleTimeString()}`);
+    const boxSummaries = [];
+    for (const [id, msgs] of dropBoxes.entries()) {
+        totalMessages += msgs.length;
+        boxSummaries.push(`${id.substring(0, 8)}(${msgs.length})`);
+    }
+    
+    console.log(`[HEARTBEAT] 💓 FARO V5.2 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
 }
 
 async function handleDropStore(data) {
-    // Handler universal: acepta objeto {stream} o stream directo
     const stream = data.stream || data;
     const connection = data.connection || {};
     const remotePeer = connection.remotePeer?.toString()?.substring(0, 8) || 'unknown';
@@ -60,7 +38,7 @@ async function handleDropStore(data) {
         }
         
         if (chunks.length === 0) {
-            console.warn(`[Buzón] ⚠️ Stream STORE vacío de ${remotePeer}`);
+            console.warn(`[Buzón] ⚠️ STORE vacío de ${remotePeer}`);
             return;
         }
 
@@ -75,10 +53,10 @@ async function handleDropStore(data) {
         const rawBody = toString(combined).trim();
         const parts = rawBody.split(' ');
         const boxId = parts[0];
-        const payload = parts.slice(1).join(' ');
+        const payloadB64 = parts.slice(1).join(' ');
 
-        if (!boxId || !payload) {
-            console.error(`[Buzón] ❌ Mal formado: ID=${boxId}, PayloadSize=${payload?.length}`);
+        if (!boxId || !payloadB64) {
+            console.error(`[Buzón] ❌ Mal formado de ${remotePeer}: ID=${boxId}, PayloadSize=${payloadB64?.length}`);
             return;
         }
 
@@ -86,8 +64,8 @@ async function handleDropStore(data) {
         const box = dropBoxes.get(boxId);
         if (box.length >= MAX_DROPS_PER_BOX) box.shift();
         
-        box.push({ payload, timestamp: Date.now() });
-        console.log(`[Buzón] ✅ ALMACENADO en ID: ${boxId.substring(0, 8)}...`);
+        box.push({ payload: payloadB64, timestamp: Date.now() });
+        console.log(`[Buzón] ✅ ALMACENADO en ID: ${boxId.substring(0, 8)}... (Total en buzón: ${box.length})`);
     } catch (e) {
         console.error(`[Buzón] ❌ Error STORE: ${e.message}`);
     } finally {
@@ -116,7 +94,7 @@ async function handleDropFetch(data) {
         }
 
         const boxId = toString(combined).trim();
-        console.log(`[Buzón] 🔍 Solicitud para ID: ${boxId.substring(0, 8)}...`);
+        console.log(`[Buzón] 🔍 Solicitud de ${remotePeer} para ID: ${boxId.substring(0, 8)}...`);
 
         const box = dropBoxes.get(boxId);
         if (!box || box.length === 0) {
@@ -125,7 +103,7 @@ async function handleDropFetch(data) {
             const drop = box.shift();
             if (box.length === 0) dropBoxes.delete(boxId);
             await stream.sink([fromString(drop.payload)]);
-            console.log(`[Buzón] 📤 DESPACHADO: ${boxId.substring(0, 8)}...`);
+            console.log(`[Buzón] 📤 DESPACHADO: ${boxId.substring(0, 8)}... a ${remotePeer}`);
         }
     } catch (e) {
         console.error(`[Buzón] ❌ Error FETCH: ${e.message}`);
@@ -135,7 +113,7 @@ async function handleDropFetch(data) {
 }
 
 async function startFaro() {
-    console.log('--- FARO v5.1 (Status HTTP + Handler Universal) ---');
+    console.log('--- FARO v5.2 (Fijo Puerto + Robustez) ---');
     const port = process.env.PORT || 10000;
 
     let privateKey;
@@ -168,13 +146,8 @@ async function startFaro() {
     await node.handle('/wsmp/drop/fetch/1.0.0', handleDropFetch);
 
     await node.start();
-    console.log(`🚀 FARO v5.1 ONLINE | PeerID: ${node.peerId.toString()}`);
+    console.log(`🚀 FARO v5.2 ONLINE | PeerID: ${node.peerId.toString()}`);
     
-    // Arrancar servidor HTTP para auditoría
-    server.listen(port, () => {
-        console.log(`🌐 Status Web: https://faro-whisper.onrender.com/status`);
-    });
-
     setInterval(logStatus, 5000);
 }
 
