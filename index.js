@@ -127,17 +127,18 @@ async function startFaro() {
     const node = await createLibp2p({
         ...(privateKey ? { privateKey } : {}),
         addresses: {
-            listen: [`/ip4/0.0.0.0/tcp/${port}/ws`],
+            // [FIX v5.5] NO ponemos listen manual aquí para evitar EADDRINUSE.
+            // El transporte WebSockets detecta automáticamente el httpServer compartido.
             announce: [`/dns4/faro-whisper.onrender.com/tcp/443/wss`]
         },
         transports: [
-            tcp(), 
+            // tcp(), // Render no soporta TCP directo
             webSockets({ server: httpServer, filter: (addrs) => addrs })
         ],
         connectionEncrypters: [noise()],
         streamMuxers: [yamux()],
         connectionManager: {
-            maxIdleTime: 24 * 60 * 60 * 1000 // 24h de gracia para evitar cortes abruptos
+            maxIdleTime: 24 * 60 * 60 * 1000 // 24h de gracia
         },
         services: {
             identify: identify(),
@@ -175,7 +176,6 @@ async function startFaro() {
     }, 45 * 1000);
 
     // [STAY-ALIVE 3] Refresh de Larga Duración (cada 29 min)
-    // Notificación de logs para control del usuario.
     setInterval(() => {
         console.log("[Stay-Alive] 🛡️ Ciclo de persistencia de 29m completado. El Faro sigue en linea.");
     }, 29 * 60 * 1000);
