@@ -25,17 +25,13 @@ function logStatus() {
 }
 
 async function handleDropStore(data) {
-    const stream = data.stream;
-    const peer = data.connection ? data.connection.remotePeer.toString().substring(0, 16) : '?';
-    console.log(`[Buzón] 📥 Nueva conexión STORE desde ${peer}`);
+    // En libp2p v3/yamux, data ES el stream directamente (no {stream, connection})
+    const stream = data.stream || data;
+    console.log(`[Buzón] 📥 Nueva conexión STORE (protocol: ${stream.protocol || data.protocol || '?'})`);
     try {
-        // Debug: inspeccionar estructura del stream
-        if (!stream) {
-            console.error(`[Buzón] ❌ STORE: stream es undefined. data keys: ${Object.keys(data)}`);
-            return;
-        }
-        if (!stream.source) {
-            console.error(`[Buzón] ❌ STORE: stream.source undefined. stream keys: ${Object.keys(stream)}, proto: ${Object.getOwnPropertyNames(Object.getPrototypeOf(stream)).slice(0,10)}`);
+        // source/sink son getters del prototipo, no propiedades enumerables
+        if (typeof stream.source === 'undefined' && typeof stream[Symbol.asyncIterator] === 'undefined') {
+            console.error(`[Buzón] ❌ STORE: sin source. keys: ${Object.keys(data)}, proto: ${Object.getOwnPropertyNames(Object.getPrototypeOf(data)).join(',')}`);
             return;
         }
 
@@ -74,26 +70,21 @@ async function handleDropStore(data) {
         const box = dropBoxes.get(boxId);
         if (box.length >= MAX_DROPS_PER_BOX) box.shift();
         box.push({ payload: payloadB64, timestamp: Date.now() });
-        console.log(`[Buzón] ✅ ALMACENADO en ID: ${boxId.substring(0, 8)}... (${payloadB64.length} chars) desde ${peer}`);
+        console.log(`[Buzón] ✅ ALMACENADO en ID: ${boxId.substring(0, 8)}... (${payloadB64.length} chars)`);
     } catch (e) {
         console.error(`[Buzón] ❌ Error STORE: ${e.message}`);
-        console.error(`[Buzón] ❌ Stack: ${e.stack}`);
     } finally {
-        try { await stream.close(); } catch (e) {}
+        try { if (stream.close) await stream.close(); } catch (e) {}
     }
 }
 
 async function handleDropFetch(data) {
-    const stream = data.stream;
-    const peer = data.connection ? data.connection.remotePeer.toString().substring(0, 16) : '?';
-    console.log(`[Buzón] 🔍 Nueva conexión FETCH desde ${peer}`);
+    // En libp2p v3/yamux, data ES el stream directamente
+    const stream = data.stream || data;
+    console.log(`[Buzón] 🔍 Nueva conexión FETCH`);
     try {
-        if (!stream) {
-            console.error(`[Buzón] ❌ FETCH: stream es undefined. data keys: ${Object.keys(data)}`);
-            return;
-        }
-        if (!stream.source) {
-            console.error(`[Buzón] ❌ FETCH: stream.source undefined. stream keys: ${Object.keys(stream)}, proto: ${Object.getOwnPropertyNames(Object.getPrototypeOf(stream)).slice(0,10)}`);
+        if (typeof stream.source === 'undefined' && typeof stream[Symbol.asyncIterator] === 'undefined') {
+            console.error(`[Buzón] ❌ FETCH: sin source. keys: ${Object.keys(data)}, proto: ${Object.getOwnPropertyNames(Object.getPrototypeOf(data)).join(',')}`);
             return;
         }
 
@@ -123,9 +114,8 @@ async function handleDropFetch(data) {
         }
     } catch (e) {
         console.error(`[Buzón] ❌ Error FETCH: ${e.message}`);
-        console.error(`[Buzón] ❌ Stack: ${e.stack}`);
     } finally {
-        try { await stream.close(); } catch (e) {}
+        try { if (stream.close) await stream.close(); } catch (e) {}
     }
 }
 
