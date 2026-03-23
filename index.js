@@ -71,13 +71,40 @@ async function readAllBytes(streamObj) {
     return combined;
 }
 
-// Función helper para escribir bytes a un stream
+// Función helper para escribir bytes a un stream (libp2p v3 compatible)
 async function writeBytes(streamObj, data) {
+    // Método 1: .sink (libp2p clásico)
     if (streamObj.sink && typeof streamObj.sink === 'function') {
         await streamObj.sink([data]);
-    } else {
-        throw new Error(`No sink function found. typeof sink=${typeof streamObj.sink}`);
+        return;
     }
+    // Método 2: .write (AbstractStream newer API)
+    if (typeof streamObj.write === 'function') {
+        await streamObj.write(data);
+        return;
+    }
+    // Método 3: Web Streams API (.writable)
+    if (streamObj.writable && typeof streamObj.writable.getWriter === 'function') {
+        const writer = streamObj.writable.getWriter();
+        await writer.write(data);
+        writer.releaseLock();
+        return;
+    }
+    // Método 4: sendData / push
+    if (typeof streamObj.push === 'function') {
+        streamObj.push(data);
+        return;
+    }
+    // FALLBACK: volcar prototype chain para debugging
+    let proto = Object.getPrototypeOf(streamObj);
+    let depth = 0;
+    while (proto && depth < 5) {
+        const names = Object.getOwnPropertyNames(proto);
+        console.log(`[Buzón] 🔬 WRITE proto[${depth}](${proto.constructor?.name}): ${names.join(',')}`);
+        depth++;
+        proto = Object.getPrototypeOf(proto);
+    }
+    throw new Error(`No write method found. write=${typeof streamObj.write} writable=${typeof streamObj.writable} push=${typeof streamObj.push}`);
 }
 
 async function handleDropStore(data) {
