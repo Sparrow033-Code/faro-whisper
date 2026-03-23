@@ -26,11 +26,11 @@ const httpServer = http.createServer((req, res) => {
             boxes.push({ id: id.substring(0, 8), count: msgs.length });
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: "ONLINE", version: "5.5.1", totalMessages, boxes }, null, 2));
+        res.end(JSON.stringify({ status: "ONLINE", version: "6.0", totalMessages, boxes }, null, 2));
         return;
     }
     res.writeHead(200);
-    res.end("FARO V5.5.1 STAY-ALIVE ACTIVE");
+    res.end("FARO V6.0 STAY-ALIVE ACTIVE");
 });
 
 function logStatus() {
@@ -40,7 +40,7 @@ function logStatus() {
         totalMessages += msgs.length;
         boxSummaries.push(`${id.substring(0, 8)}(${msgs.length})`);
     }
-    console.log(`[HEARTBEAT] 💓 FARO V5.5.1 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
+    console.log(`[HEARTBEAT] 💓 FARO V6.0 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
 }
 
 async function handleDropStore(data) {
@@ -110,7 +110,7 @@ async function handleDropFetch(data) {
 }
 
 async function startFaro() {
-    console.log('--- FARO v5.5.1 (Motor de Estabilidad Persistente) ---');
+    console.log('--- FARO v6.0 (Listener Restaurado) ---');
     const port = process.env.PORT || 10000;
 
     let privateKey;
@@ -120,22 +120,25 @@ async function startFaro() {
         } catch (e) { console.error('❌ Error FARO_KEY:', e.message); }
     }
 
-    httpServer.listen(port, () => {
-        console.log(`🚀 HTTP Health-Check Server listening on port ${port} (Status v5.5.1)`);
-    });
+    // [FIX v6.0] NO llamamos httpServer.listen() aquí.
+    // Dejamos que libp2p lo gestione internamente a través del transporte WebSockets.
+    // Así el puerto se abre UNA sola vez y libp2p registra su listener correctamente.
 
     const node = await createLibp2p({
         ...(privateKey ? { privateKey } : {}),
         addresses: {
+            // [FIX v6.0] RESTAURADO: libp2p NECESITA un listen para aceptar conexiones entrantes.
+            listen: [`/ip4/0.0.0.0/tcp/${port}/ws`],
             announce: [`/dns4/faro-whisper.onrender.com/tcp/443/wss`]
         },
         transports: [
+            // httpServer se pasa aquí: libp2p lo usa para escuchar Y para HTTP health check.
             webSockets({ server: httpServer, filter: (addrs) => addrs })
         ],
         connectionEncrypters: [noise()],
         streamMuxers: [yamux()],
         connectionManager: {
-            maxIdleTime: 24 * 60 * 60 * 1000 // 24h de gracia
+            maxIdleTime: 24 * 60 * 60 * 1000
         },
         services: {
             identify: identify(),
@@ -158,10 +161,11 @@ async function startFaro() {
     await node.handle('/wsmp/drop/fetch/1.0.0', handleDropFetch);
 
     await node.start();
-    console.log(`🚀 P2P Engine ONLINE | PeerID: ${node.peerId.toString()}`);
+    console.log(`🚀 FARO v6.0 ONLINE | PeerID: ${node.peerId.toString()}`);
+    console.log(`🚀 Escuchando en puerto ${port} (HTTP + WebSocket P2P unificados)`);
     
     logStatus();
-    setInterval(logStatus, 30000); // Audit log cada 30s
+    setInterval(logStatus, 30000);
 
     // [STAY-ALIVE 1] Anti-Sleep de Render (cada 14 min)
     // Autismo-ping HTTP para que Render crea que hay tráfico Web real.
