@@ -26,11 +26,11 @@ const httpServer = http.createServer((req, res) => {
             boxes.push({ id: id.substring(0, 8), count: msgs.length });
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: "ONLINE", version: "5.4", totalMessages, boxes }, null, 2));
+        res.end(JSON.stringify({ status: "ONLINE", version: "5.5.1", totalMessages, boxes }, null, 2));
         return;
     }
     res.writeHead(200);
-    res.end("FARO V5.4 STAY-ALIVE ACTIVE");
+    res.end("FARO V5.5.1 STAY-ALIVE ACTIVE");
 });
 
 function logStatus() {
@@ -40,7 +40,7 @@ function logStatus() {
         totalMessages += msgs.length;
         boxSummaries.push(`${id.substring(0, 8)}(${msgs.length})`);
     }
-    console.log(`[HEARTBEAT] 💓 FARO V5.4 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
+    console.log(`[HEARTBEAT] 💓 FARO V5.5.1 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
 }
 
 async function handleDropStore(data) {
@@ -110,7 +110,7 @@ async function handleDropFetch(data) {
 }
 
 async function startFaro() {
-    console.log('--- FARO v5.4 (Motor de Estabilidad Persistente) ---');
+    console.log('--- FARO v5.5.1 (Motor de Estabilidad Persistente) ---');
     const port = process.env.PORT || 10000;
 
     let privateKey;
@@ -121,18 +121,15 @@ async function startFaro() {
     }
 
     httpServer.listen(port, () => {
-        console.log(`🚀 HTTP Health-Check Server listening on port ${port}`);
+        console.log(`🚀 HTTP Health-Check Server listening on port ${port} (Status v5.5.1)`);
     });
 
     const node = await createLibp2p({
         ...(privateKey ? { privateKey } : {}),
         addresses: {
-            // [FIX v5.5] NO ponemos listen manual aquí para evitar EADDRINUSE.
-            // El transporte WebSockets detecta automáticamente el httpServer compartido.
             announce: [`/dns4/faro-whisper.onrender.com/tcp/443/wss`]
         },
         transports: [
-            // tcp(), // Render no soporta TCP directo
             webSockets({ server: httpServer, filter: (addrs) => addrs })
         ],
         connectionEncrypters: [noise()],
@@ -147,6 +144,14 @@ async function startFaro() {
             relay: circuitRelayServer({ reservations: { applyDefaultLimit: false } }),
             dht: kadDHT({ protocol: '/wsmp/kad/1.0.0' })
         }
+    });
+
+    // Logs de conexión para depuración
+    node.addEventListener('peer:connect', (evt) => {
+        console.log(`[Red] 🤝 Conexión establecida con: ${evt.detail.toString()}`);
+    });
+    node.addEventListener('peer:disconnect', (evt) => {
+        console.log(`[Red] 🔌 Desconexión: ${evt.detail.toString()}`);
     });
 
     await node.handle('/wsmp/drop/store/1.0.0', handleDropStore);
