@@ -15,7 +15,6 @@
     "@libp2p/kad-dht": "^16.1.5",
     "@libp2p/noise": "^1.0.1",
     "@libp2p/ping": "^3.0.12",
-    "@libp2p/tcp": "^11.0.12",
     "@libp2p/websockets": "^10.1.6",
     "@libp2p/yamux": "^8.0.1",
     "libp2p": "^3.1.6",
