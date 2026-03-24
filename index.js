@@ -219,8 +219,15 @@ async function startFaro() {
         console.log(`[Red] 🔌 Desconexión: ${evt.detail.toString()}`);
     });
 
-    await node.handle('/wsmp/drop/store/1.0.0', handleDropStore);
-    await node.handle('/wsmp/drop/fetch/1.0.0', handleDropFetch);
+    // Log de protocolos para detectar mismatch
+    node.handle('/wsmp/drop/store/1.0.0', (data) => {
+        console.log(`[Protocolo] 🚀 /wsmp/drop/store/1.0.0 invocado por ${data.connection.remotePeer.toString()}`);
+        return handleDropStore(data);
+    });
+    node.handle('/wsmp/drop/fetch/1.0.0', (data) => {
+        console.log(`[Protocolo] 🔍 /wsmp/drop/fetch/1.0.0 invocado por ${data.connection.remotePeer.toString()}`);
+        return handleDropFetch(data);
+    });
 
     await node.start();
     
