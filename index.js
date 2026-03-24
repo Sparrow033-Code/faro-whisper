@@ -114,7 +114,7 @@ async function handleDropStore(data) {
     console.log(`[Buzón] 📥 STORE | src=${typeof stream.source} srcCtor=${stream.source?.constructor?.name} asyncIter=${typeof stream[Symbol.asyncIterator]}`);
     try {
         const rawBytes = await readAllBytes(stream);
-        console.log(`[Buzón] 📥 STORE: ${rawBytes.length} bytes leídos del stream`);
+        console.log(`[Buzón] 📥 STORE: ${rawBytes.length} bytes leídos del stream. Contenido: "${toString(rawBytes).substring(0, 100)}..."`);
         if (rawBytes.length === 0) {
             console.log(`[Buzón] ⚠️ STORE: 0 bytes recibidos.`);
             try { await writeBytes(stream, fromString('ERR_EMPTY')); } catch(e) {}
