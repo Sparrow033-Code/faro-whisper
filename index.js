@@ -10,6 +10,14 @@ import { fromString } from 'uint8arrays/from-string';
 import { toString } from 'uint8arrays/to-string';
 import { Uint8ArrayList } from 'uint8arraylist';
 
+// Capturar TODOS los errores no manejados
+process.on('uncaughtException', (err) => {
+    console.error('[FARO CRASH] uncaughtException:', err.message, err.stack);
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('[FARO CRASH] unhandledRejection:', reason);
+});
+
 const dropBoxes = new Map();
 const MAX_DROPS_PER_BOX = 100;
 
@@ -20,12 +28,11 @@ function logStatus() {
         totalMessages += msgs.length;
         boxSummaries.push(`${id.substring(0, 8)}(${msgs.length})`);
     }
-    console.log(`[HEARTBEAT] 💓 FARO V7.3 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
+    console.log(`[HEARTBEAT] 💓 FARO V7.4 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
 }
 
 /**
  * STORE handler — Lee datos del cliente y responde con OK/ERR.
- * Usa la API de stream.write() en lugar de sink() para no cerrar el stream prematuramente.
  */
 async function handleDropStore(data) {
     const stream = data.stream || data;
@@ -71,7 +78,7 @@ async function handleDropStore(data) {
         box.push({ payload: payloadB64, timestamp: Date.now() });
         console.log(`[Buzón] ✅ ALMACENADO en ID: ${boxId.substring(0, 8)}... (${payloadB64.length} chars)`);
 
-        // Responder OK — usar sink para enviar respuesta y cerrar el stream en un solo paso
+        // Responder OK
         try {
             await stream.sink([fromString('OK')]);
             console.log(`[Buzón] ✅ OK enviado al cliente.`);
@@ -93,7 +100,6 @@ async function handleDropFetch(data) {
     console.log(`[Buzón] 🔍 FETCH handler invocado! Peer: ${remotePeer}`);
 
     try {
-        // Leer el boxId del cliente
         const bl = new Uint8ArrayList();
         for await (const chunk of stream.source) {
             bl.append(chunk);
@@ -114,9 +120,8 @@ async function handleDropFetch(data) {
             return;
         }
 
-        // Devolver TODOS los mensajes del buzón (separados por newline)
         const allPayloads = box.map(m => m.payload).join('\n');
-        box.length = 0; // Vaciar buzón después de entregar
+        box.length = 0;
         dropBoxes.delete(boxId);
 
         console.log(`[Buzón] 📬 ENTREGANDO drop de buzón ${boxId.substring(0, 8)}... (${allPayloads.length} chars)`);
@@ -128,7 +133,7 @@ async function handleDropFetch(data) {
 }
 
 async function startFaro() {
-    console.log('--- FARO v7.3 (Stream Fix) ---');
+    console.log('--- FARO v7.4 (Await Handle Fix) ---');
     const port = process.env.PORT || 10000;
 
     let privateKey;
@@ -144,16 +149,11 @@ async function startFaro() {
             listen: [`/ip4/0.0.0.0/tcp/${port}/ws`],
             announce: [`/dns4/faro-whisper.onrender.com/tcp/443/wss`]
         },
-        transports: [
-            webSockets({
-                filter: () => true
-            })
-        ],
+        transports: [webSockets()],
         connectionEncrypters: [noise()],
         streamMuxers: [yamux()],
         connectionManager: {
-            maxIdleTime: 24 * 60 * 60 * 1000,
-            minConnections: 1
+            maxIdleTime: 24 * 60 * 60 * 1000
         },
         services: {
             identify: identify(),
@@ -170,6 +170,7 @@ async function startFaro() {
         }
     });
 
+    // Eventos de conexión
     node.addEventListener('peer:connect', (evt) => {
         console.log(`[Red] 🤝 Conexión entrante de: ${evt.detail.toString()}`);
     });
@@ -177,13 +178,20 @@ async function startFaro() {
         console.log(`[Red] 🔌 Desconexión: ${evt.detail.toString()}`);
     });
 
-    // Registrar handlers de protocolo DIRECTAMENTE sin interceptor
-    node.handle('/wsmp/drop/store/1.0.0', handleDropStore);
-    node.handle('/wsmp/drop/fetch/1.0.0', handleDropFetch);
+    // ⭐ CLAVE: await node.handle() — en libp2p v3 devuelve Promise
+    console.log('[Faro] Registrando protocolos...');
+    await node.handle('/wsmp/drop/store/1.0.0', handleDropStore);
+    console.log('[Faro] ✅ /wsmp/drop/store/1.0.0 registrado');
+    await node.handle('/wsmp/drop/fetch/1.0.0', handleDropFetch);
+    console.log('[Faro] ✅ /wsmp/drop/fetch/1.0.0 registrado');
+
+    // Verificar los protocolos registrados
+    const protocols = node.getProtocols();
+    console.log(`[Faro] Protocolos activos: ${protocols.join(', ')}`);
 
     await node.start();
 
-    console.log(`🚀 FARO v7.3 ONLINE | PeerID: ${node.peerId.toString()}`);
+    console.log(`🚀 FARO v7.4 ONLINE | PeerID: ${node.peerId.toString()}`);
     console.log(`🚀 Puerto ${port} — WebSocket P2P Puro`);
     console.log(`📋 Protocolos: /wsmp/drop/store/1.0.0, /wsmp/drop/fetch/1.0.0`);
 
@@ -194,7 +202,7 @@ async function startFaro() {
     setInterval(logStatus, 30000);
 
     setInterval(() => {
-        console.log("[Stay-Alive] 🛡️ Ciclo de persistencia de 29m completado.");
+        console.log("[Stay-Alive] 🛡️ Ciclo de persistencia.");
     }, 29 * 60 * 1000);
 }
 
