@@ -117,7 +117,7 @@ async function handleDropStore(data) {
         console.log(`[Buzón] 📥 STORE: ${rawBytes.length} bytes leídos del stream. Contenido: "${toString(rawBytes).substring(0, 100)}..."`);
         if (rawBytes.length === 0) {
             console.log(`[Buzón] ⚠️ STORE: 0 bytes recibidos.`);
-            try { await writeBytes(stream, fromString('ERR_EMPTY')); } catch(e) {}
+            try { await writeBytes(stream, fromString('ERR_EMPTY')); } catch (e) { }
             return;
         }
 
@@ -125,7 +125,7 @@ async function handleDropStore(data) {
         const spaceIdx = rawBody.indexOf(' ');
         if (spaceIdx === -1) {
             console.log(`[Buzón] ⚠️ STORE: Formato inválido (sin espacio). Body: ${rawBody.substring(0, 60)}...`);
-            try { await writeBytes(stream, fromString('ERR_FORMAT')); } catch(e) {}
+            try { await writeBytes(stream, fromString('ERR_FORMAT')); } catch (e) { }
             return;
         }
         const boxId = rawBody.substring(0, spaceIdx);
@@ -133,7 +133,7 @@ async function handleDropStore(data) {
 
         if (!boxId || !payloadB64) {
             console.log(`[Buzón] ⚠️ STORE: boxId o payload vacío.`);
-            try { await writeBytes(stream, fromString('ERR_EMPTY_FIELDS')); } catch(e) {}
+            try { await writeBytes(stream, fromString('ERR_EMPTY_FIELDS')); } catch (e) { }
             return;
         }
 
@@ -144,13 +144,13 @@ async function handleDropStore(data) {
         console.log(`[Buzón] ✅ ALMACENADO en ID: ${boxId.substring(0, 8)}... (${payloadB64.length} chars)`);
 
         // Enviar confirmación al cliente
-        try { await writeBytes(stream, fromString('OK')); } catch(e) {
+        try { await writeBytes(stream, fromString('OK')); } catch (e) {
             console.log(`[Buzón] ⚠️ No se pudo enviar OK (stream ya cerrado): ${e.message}`);
         }
     } catch (e) {
         console.error(`[Buzón] ❌ Error STORE: ${e.message}`);
     } finally {
-        try { if (stream.close) await stream.close(); } catch (e) {}
+        try { if (stream.close) await stream.close(); } catch (e) { }
     }
 }
 
@@ -174,7 +174,7 @@ async function handleDropFetch(data) {
     } catch (e) {
         console.error(`[Buzón] ❌ Error FETCH: ${e.message}`);
     } finally {
-        try { if (stream.close) await stream.close(); } catch (e) {}
+        try { if (stream.close) await stream.close(); } catch (e) { }
     }
 }
 
@@ -210,13 +210,13 @@ async function startFaro() {
                 maxOutboundStreams: 100
             }),
             pubsub: gossipsub({ allowPublishToZeroPeers: true }),
-            relay: circuitRelayServer({ 
-                reservations: { 
+            relay: circuitRelayServer({
+                reservations: {
                     applyDefaultLimit: false,
                     maxReservations: 1000
-                } 
+                }
             }),
-            dht: kadDHT({ 
+            dht: kadDHT({
                 protocol: '/wsmp/kad/1.0.0',
                 maxInboundStreams: 1024,
                 maxOutboundStreams: 1024
@@ -232,6 +232,14 @@ async function startFaro() {
     });
 
     // Log de protocolos para detectar mismatch
+    const originalHandle = node.handle.bind(node);
+    node.handle = (protocol, handler, options) => {
+        return originalHandle(protocol, async (data) => {
+            console.log(`[Protocolo] 📡 Solicitud para: ${protocol} desde ${data.connection.remotePeer.toString()}`);
+            return handler(data);
+        }, options);
+    };
+
     node.handle('/wsmp/drop/store/1.0.0', (data) => {
         console.log(`[Protocolo] 🚀 /wsmp/drop/store/1.0.0 invocado por ${data.connection.remotePeer.toString()}`);
         return handleDropStore(data);
@@ -242,11 +250,11 @@ async function startFaro() {
     });
 
     await node.start();
-    
+
     console.log(`🚀 FARO v7.2 ONLINE | PeerID: ${node.peerId.toString()}`);
     console.log(`🚀 Puerto ${port} — WebSocket P2P Puro`);
     console.log(`📋 Protocolos: /wsmp/drop/store/1.0.0, /wsmp/drop/fetch/1.0.0`);
-    
+
     const addrs = node.getMultiaddrs();
     addrs.forEach(a => console.log(`   📡 ${a.toString()}`));
 
@@ -256,7 +264,7 @@ async function startFaro() {
     setInterval(async () => {
         try {
             await node.services.pubsub.publish('whisper-heartbeat', fromString('KEEP_ALIVE'));
-        } catch (e) {}
+        } catch (e) { }
     }, 45 * 1000);
 
     setInterval(() => {
