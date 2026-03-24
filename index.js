@@ -35,14 +35,23 @@ function logStatus() {
  * STORE handler — Lee datos del cliente y responde con OK/ERR.
  */
 async function handleDropStore(data) {
-    const stream = data.stream || data;
     const remotePeer = data.connection?.remotePeer?.toString() || 'desconocido';
     console.log(`[Buzón] 📥 STORE handler invocado! Peer: ${remotePeer}`);
+    
+    // DEBUG: inspeccionar estructura del data
+    console.log(`[Buzón] DEBUG data keys: ${Object.keys(data).join(', ')}`);
+    const stream = data.stream || data;
+    console.log(`[Buzón] DEBUG stream keys: ${Object.keys(stream).join(', ')}`);
+    console.log(`[Buzón] DEBUG stream.source type: ${typeof stream.source}, stream.sink type: ${typeof stream.sink}`);
+    console.log(`[Buzón] DEBUG stream[Symbol.asyncIterator]: ${typeof stream[Symbol.asyncIterator]}`);
+    // Si stream.source es undefined, intentar usar el stream directamente como iterable
+    const source = stream.source || stream;
+    console.log(`[Buzón] DEBUG source type: ${typeof source}, source[Symbol.asyncIterator]: ${typeof source[Symbol.asyncIterator]}`);
 
     try {
-        // Leer todos los bytes del cliente usando source (async iterable)
+        // Leer todos los bytes del cliente
         const bl = new Uint8ArrayList();
-        for await (const chunk of stream.source) {
+        for await (const chunk of source) {
             bl.append(chunk);
             if (bl.length > 1024 * 1024) break; // Límite 1MB
         }
@@ -95,13 +104,18 @@ async function handleDropStore(data) {
  * FETCH handler — Recibe un boxId y responde con el payload o EMPTY.
  */
 async function handleDropFetch(data) {
-    const stream = data.stream || data;
     const remotePeer = data.connection?.remotePeer?.toString() || 'desconocido';
     console.log(`[Buzón] 🔍 FETCH handler invocado! Peer: ${remotePeer}`);
+    
+    // DEBUG: inspeccionar estructura
+    console.log(`[Buzón] FETCH DEBUG data keys: ${Object.keys(data).join(', ')}`);
+    const stream = data.stream || data;
+    console.log(`[Buzón] FETCH DEBUG stream keys: ${Object.keys(stream).join(', ')}`);
+    const source = stream.source || stream;
 
     try {
         const bl = new Uint8ArrayList();
-        for await (const chunk of stream.source) {
+        for await (const chunk of source) {
             bl.append(chunk);
             if (bl.length > 1024) break;
         }
