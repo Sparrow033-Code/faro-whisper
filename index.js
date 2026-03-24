@@ -10,7 +10,6 @@ import { fromString } from 'uint8arrays/from-string';
 import { toString } from 'uint8arrays/to-string';
 import { Uint8ArrayList } from 'uint8arraylist';
 
-// Capturar TODOS los errores no manejados
 process.on('uncaughtException', (err) => {
     console.error('[FARO CRASH] uncaughtException:', err.message, err.stack);
 });
@@ -28,47 +27,40 @@ function logStatus() {
         totalMessages += msgs.length;
         boxSummaries.push(`${id.substring(0, 8)}(${msgs.length})`);
     }
-    console.log(`[HEARTBEAT] 💓 FARO V7.4 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
+    console.log(`[HEARTBEAT] 💓 FARO V7.5 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
 }
 
 /**
- * STORE handler — Lee datos del cliente y responde con OK/ERR.
+ * En libp2p v3 + Yamux, el handler recibe el STREAM directamente (no {stream, connection}).
+ * - Leer: for await (const chunk of stream) — el stream es async iterable
+ * - Escribir: await stream.write(Uint8Array) — método del prototype AbstractStream
+ * - Cerrar escritura: await stream.closeWrite()
+ * - Cerrar todo: await stream.close()
  */
-async function handleDropStore(data) {
-    const remotePeer = data.connection?.remotePeer?.toString() || 'desconocido';
-    console.log(`[Buzón] 📥 STORE handler invocado! Peer: ${remotePeer}`);
-    
-    // DEBUG: inspeccionar estructura del data
-    console.log(`[Buzón] DEBUG data keys: ${Object.keys(data).join(', ')}`);
-    const stream = data.stream || data;
-    console.log(`[Buzón] DEBUG stream keys: ${Object.keys(stream).join(', ')}`);
-    console.log(`[Buzón] DEBUG stream.source type: ${typeof stream.source}, stream.sink type: ${typeof stream.sink}`);
-    console.log(`[Buzón] DEBUG stream[Symbol.asyncIterator]: ${typeof stream[Symbol.asyncIterator]}`);
-    // Si stream.source es undefined, intentar usar el stream directamente como iterable
-    const source = stream.source || stream;
-    console.log(`[Buzón] DEBUG source type: ${typeof source}, source[Symbol.asyncIterator]: ${typeof source[Symbol.asyncIterator]}`);
 
+async function handleDropStore(stream) {
+    console.log(`[Buzón] 📥 STORE handler invocado!`);
     try {
-        // Leer todos los bytes del cliente
+        // Leer datos del cliente (el stream es async iterable directamente)
         const bl = new Uint8ArrayList();
-        for await (const chunk of source) {
+        for await (const chunk of stream) {
             bl.append(chunk);
-            if (bl.length > 1024 * 1024) break; // Límite 1MB
+            if (bl.length > 1024 * 1024) break;
         }
         const rawBytes = bl.subarray();
         console.log(`[Buzón] 📥 STORE: ${rawBytes.length} bytes leídos.`);
 
         if (rawBytes.length === 0) {
             console.log(`[Buzón] ⚠️ STORE: 0 bytes recibidos.`);
-            try { await stream.sink([fromString('ERR_EMPTY')]); } catch (e) { }
+            try { await stream.write(fromString('ERR_EMPTY')); await stream.close(); } catch (e) { }
             return;
         }
 
         const rawBody = toString(rawBytes).trim();
         const spaceIdx = rawBody.indexOf(' ');
         if (spaceIdx === -1) {
-            console.log(`[Buzón] ⚠️ STORE: Formato inválido (sin espacio).`);
-            try { await stream.sink([fromString('ERR_FORMAT')]); } catch (e) { }
+            console.log(`[Buzón] ⚠️ STORE: Formato inválido.`);
+            try { await stream.write(fromString('ERR_FORMAT')); await stream.close(); } catch (e) { }
             return;
         }
 
@@ -76,8 +68,7 @@ async function handleDropStore(data) {
         const payloadB64 = rawBody.substring(spaceIdx + 1);
 
         if (!boxId || !payloadB64) {
-            console.log(`[Buzón] ⚠️ STORE: boxId o payload vacío.`);
-            try { await stream.sink([fromString('ERR_EMPTY_FIELDS')]); } catch (e) { }
+            try { await stream.write(fromString('ERR_EMPTY_FIELDS')); await stream.close(); } catch (e) { }
             return;
         }
 
@@ -87,41 +78,32 @@ async function handleDropStore(data) {
         box.push({ payload: payloadB64, timestamp: Date.now() });
         console.log(`[Buzón] ✅ ALMACENADO en ID: ${boxId.substring(0, 8)}... (${payloadB64.length} chars)`);
 
-        // Responder OK
+        // Responder OK y cerrar
         try {
-            await stream.sink([fromString('OK')]);
+            await stream.write(fromString('OK'));
             console.log(`[Buzón] ✅ OK enviado al cliente.`);
+            await stream.close();
         } catch (e) {
             console.log(`[Buzón] ⚠️ No se pudo enviar OK: ${e.message}`);
         }
     } catch (e) {
         console.error(`[Buzón] ❌ Error STORE: ${e.message}`);
-        try { await stream.sink([fromString('ERR')]); } catch (e2) { }
+        try { await stream.write(fromString('ERR')); await stream.close(); } catch (e2) { }
     }
 }
 
-/**
- * FETCH handler — Recibe un boxId y responde con el payload o EMPTY.
- */
-async function handleDropFetch(data) {
-    const remotePeer = data.connection?.remotePeer?.toString() || 'desconocido';
-    console.log(`[Buzón] 🔍 FETCH handler invocado! Peer: ${remotePeer}`);
-    
-    // DEBUG: inspeccionar estructura
-    console.log(`[Buzón] FETCH DEBUG data keys: ${Object.keys(data).join(', ')}`);
-    const stream = data.stream || data;
-    console.log(`[Buzón] FETCH DEBUG stream keys: ${Object.keys(stream).join(', ')}`);
-    const source = stream.source || stream;
-
+async function handleDropFetch(stream) {
+    console.log(`[Buzón] 🔍 FETCH handler invocado!`);
     try {
+        // Leer el boxId del cliente
         const bl = new Uint8ArrayList();
-        for await (const chunk of source) {
+        for await (const chunk of stream) {
             bl.append(chunk);
             if (bl.length > 1024) break;
         }
 
         if (bl.length === 0) {
-            try { await stream.sink([fromString('EMPTY')]); } catch (e) { }
+            try { await stream.write(fromString('EMPTY')); await stream.close(); } catch (e) { }
             return;
         }
 
@@ -130,7 +112,7 @@ async function handleDropFetch(data) {
 
         const box = dropBoxes.get(boxId);
         if (!box || box.length === 0) {
-            try { await stream.sink([fromString('EMPTY')]); } catch (e) { }
+            try { await stream.write(fromString('EMPTY')); await stream.close(); } catch (e) { }
             return;
         }
 
@@ -139,15 +121,15 @@ async function handleDropFetch(data) {
         dropBoxes.delete(boxId);
 
         console.log(`[Buzón] 📬 ENTREGANDO drop de buzón ${boxId.substring(0, 8)}... (${allPayloads.length} chars)`);
-        try { await stream.sink([fromString(allPayloads)]); } catch (e) { }
+        try { await stream.write(fromString(allPayloads)); await stream.close(); } catch (e) { }
     } catch (e) {
         console.error(`[Buzón] ❌ Error FETCH: ${e.message}`);
-        try { await stream.sink([fromString('EMPTY')]); } catch (e2) { }
+        try { await stream.write(fromString('EMPTY')); await stream.close(); } catch (e2) { }
     }
 }
 
 async function startFaro() {
-    console.log('--- FARO v7.4 (Await Handle Fix) ---');
+    console.log('--- FARO v7.5 (Stream API v3 Fix) ---');
     const port = process.env.PORT || 10000;
 
     let privateKey;
@@ -171,56 +153,32 @@ async function startFaro() {
         },
         services: {
             identify: identify(),
-            ping: ping({
-                maxInboundStreams: 256,
-                maxOutboundStreams: 256
-            }),
+            ping: ping({ maxInboundStreams: 256, maxOutboundStreams: 256 }),
             relay: circuitRelayServer({
-                reservations: {
-                    applyDefaultLimit: false,
-                    maxReservations: 1000
-                }
+                reservations: { applyDefaultLimit: false, maxReservations: 1000 }
             })
         }
     });
 
-    // Eventos de conexión
     node.addEventListener('peer:connect', (evt) => {
-        console.log(`[Red] 🤝 Conexión entrante de: ${evt.detail.toString()}`);
-    });
-    node.addEventListener('peer:disconnect', (evt) => {
-        console.log(`[Red] 🔌 Desconexión: ${evt.detail.toString()}`);
+        console.log(`[Red] 🤝 Conexión de: ${evt.detail.toString()}`);
     });
 
-    // ⭐ CLAVE: await node.handle() — en libp2p v3 devuelve Promise
-    console.log('[Faro] Registrando protocolos...');
+    // Registrar protocolos (AWAIT obligatorio en libp2p v3)
     await node.handle('/wsmp/drop/store/1.0.0', handleDropStore);
-    console.log('[Faro] ✅ /wsmp/drop/store/1.0.0 registrado');
     await node.handle('/wsmp/drop/fetch/1.0.0', handleDropFetch);
-    console.log('[Faro] ✅ /wsmp/drop/fetch/1.0.0 registrado');
-
-    // Verificar los protocolos registrados
-    const protocols = node.getProtocols();
-    console.log(`[Faro] Protocolos activos: ${protocols.join(', ')}`);
+    console.log(`[Faro] Protocolos registrados: ${node.getProtocols().join(', ')}`);
 
     await node.start();
 
-    console.log(`🚀 FARO v7.4 ONLINE | PeerID: ${node.peerId.toString()}`);
-    console.log(`🚀 Puerto ${port} — WebSocket P2P Puro`);
-    console.log(`📋 Protocolos: /wsmp/drop/store/1.0.0, /wsmp/drop/fetch/1.0.0`);
-
+    console.log(`🚀 FARO v7.5 ONLINE | PeerID: ${node.peerId.toString()}`);
+    console.log(`🚀 Puerto ${port}`);
     const addrs = node.getMultiaddrs();
     addrs.forEach(a => console.log(`   📡 ${a.toString()}`));
 
     logStatus();
     setInterval(logStatus, 30000);
-
-    setInterval(() => {
-        console.log("[Stay-Alive] 🛡️ Ciclo de persistencia.");
-    }, 29 * 60 * 1000);
+    setInterval(() => { console.log("[Stay-Alive] 🛡️"); }, 29 * 60 * 1000);
 }
 
-startFaro().catch(err => {
-    console.error('❌ ERROR GLOBAL:', err);
-    process.exit(1);
-});
+startFaro().catch(err => { console.error('❌ ERROR GLOBAL:', err); process.exit(1); });
