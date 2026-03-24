@@ -205,10 +205,22 @@ async function startFaro() {
         },
         services: {
             identify: identify(),
-            ping: ping(),
+            ping: ping({
+                maxInboundStreams: 100,
+                maxOutboundStreams: 100
+            }),
             pubsub: gossipsub({ allowPublishToZeroPeers: true }),
-            relay: circuitRelayServer({ reservations: { applyDefaultLimit: false } }),
-            dht: kadDHT({ protocol: '/wsmp/kad/1.0.0' })
+            relay: circuitRelayServer({ 
+                reservations: { 
+                    applyDefaultLimit: false,
+                    maxReservations: 1000
+                } 
+            }),
+            dht: kadDHT({ 
+                protocol: '/wsmp/kad/1.0.0',
+                maxInboundStreams: 1024,
+                maxOutboundStreams: 1024
+            })
         }
     });
 
