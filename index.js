@@ -196,30 +196,28 @@ async function startFaro() {
             announce: [`/dns4/faro-whisper.onrender.com/tcp/443/wss`]
         },
         transports: [
-            webSockets()
+            webSockets({
+                filter: () => true 
+            })
         ],
         connectionEncrypters: [noise()],
         streamMuxers: [yamux()],
         connectionManager: {
-            maxIdleTime: 24 * 60 * 60 * 1000
+            maxIdleTime: 24 * 60 * 60 * 1000,
+            minConnections: 1
         },
         services: {
             identify: identify(),
             ping: ping({
-                maxInboundStreams: 100,
-                maxOutboundStreams: 100
+                maxInboundStreams: 256,
+                maxOutboundStreams: 256,
+                runValue: 10000
             }),
-            pubsub: gossipsub({ allowPublishToZeroPeers: true }),
             relay: circuitRelayServer({
                 reservations: {
                     applyDefaultLimit: false,
                     maxReservations: 1000
                 }
-            }),
-            dht: kadDHT({
-                protocol: '/wsmp/kad/1.0.0',
-                maxInboundStreams: 1024,
-                maxOutboundStreams: 1024
             })
         }
     });
