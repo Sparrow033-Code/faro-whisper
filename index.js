@@ -27,21 +27,31 @@ function logStatus() {
         totalMessages += msgs.length;
         boxSummaries.push(`${id.substring(0, 8)}(${msgs.length})`);
     }
-    console.log(`[HEARTBEAT] 💓 FARO V7.5 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
+    console.log(`[HEARTBEAT] 💓 FARO V7.6 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
 }
 
 /**
- * En libp2p v3 + Yamux, el handler recibe el STREAM directamente (no {stream, connection}).
- * - Leer: for await (const chunk of stream) — el stream es async iterable
- * - Escribir: await stream.write(Uint8Array) — método del prototype AbstractStream
- * - Cerrar escritura: await stream.closeWrite()
- * - Cerrar todo: await stream.close()
+ * Helper universal: envía datos por el stream usando la API disponible.
+ * Yamux streams usan send() (en AbstractMessageStream prototype).
  */
+async function streamSend(stream, data) {
+    if (typeof stream.send === 'function') {
+        await stream.send(data);
+    } else if (typeof stream.write === 'function') {
+        await stream.write(data);
+    } else if (typeof stream.sink === 'function') {
+        await stream.sink([data]);
+    } else {
+        throw new Error('Stream sin método de envío');
+    }
+}
 
+/**
+ * STORE handler — Lee datos del cliente y responde con OK/ERR.
+ */
 async function handleDropStore(stream) {
     console.log(`[Buzón] 📥 STORE handler invocado!`);
     try {
-        // Leer datos del cliente (el stream es async iterable directamente)
         const bl = new Uint8ArrayList();
         for await (const chunk of stream) {
             bl.append(chunk);
@@ -52,7 +62,7 @@ async function handleDropStore(stream) {
 
         if (rawBytes.length === 0) {
             console.log(`[Buzón] ⚠️ STORE: 0 bytes recibidos.`);
-            try { await stream.write(fromString('ERR_EMPTY')); await stream.close(); } catch (e) { }
+            try { await streamSend(stream, fromString('ERR_EMPTY')); await stream.close(); } catch (e) { }
             return;
         }
 
@@ -60,7 +70,7 @@ async function handleDropStore(stream) {
         const spaceIdx = rawBody.indexOf(' ');
         if (spaceIdx === -1) {
             console.log(`[Buzón] ⚠️ STORE: Formato inválido.`);
-            try { await stream.write(fromString('ERR_FORMAT')); await stream.close(); } catch (e) { }
+            try { await streamSend(stream, fromString('ERR_FORMAT')); await stream.close(); } catch (e) { }
             return;
         }
 
@@ -68,7 +78,7 @@ async function handleDropStore(stream) {
         const payloadB64 = rawBody.substring(spaceIdx + 1);
 
         if (!boxId || !payloadB64) {
-            try { await stream.write(fromString('ERR_EMPTY_FIELDS')); await stream.close(); } catch (e) { }
+            try { await streamSend(stream, fromString('ERR_EMPTY_FIELDS')); await stream.close(); } catch (e) { }
             return;
         }
 
@@ -80,7 +90,7 @@ async function handleDropStore(stream) {
 
         // Responder OK y cerrar
         try {
-            await stream.write(fromString('OK'));
+            await streamSend(stream, fromString('OK'));
             console.log(`[Buzón] ✅ OK enviado al cliente.`);
             await stream.close();
         } catch (e) {
@@ -88,14 +98,16 @@ async function handleDropStore(stream) {
         }
     } catch (e) {
         console.error(`[Buzón] ❌ Error STORE: ${e.message}`);
-        try { await stream.write(fromString('ERR')); await stream.close(); } catch (e2) { }
+        try { await streamSend(stream, fromString('ERR')); await stream.close(); } catch (e2) { }
     }
 }
 
+/**
+ * FETCH handler — Recibe un boxId y responde con el payload o EMPTY.
+ */
 async function handleDropFetch(stream) {
     console.log(`[Buzón] 🔍 FETCH handler invocado!`);
     try {
-        // Leer el boxId del cliente
         const bl = new Uint8ArrayList();
         for await (const chunk of stream) {
             bl.append(chunk);
@@ -103,7 +115,7 @@ async function handleDropFetch(stream) {
         }
 
         if (bl.length === 0) {
-            try { await stream.write(fromString('EMPTY')); await stream.close(); } catch (e) { }
+            try { await streamSend(stream, fromString('EMPTY')); await stream.close(); } catch (e) { }
             return;
         }
 
@@ -112,7 +124,7 @@ async function handleDropFetch(stream) {
 
         const box = dropBoxes.get(boxId);
         if (!box || box.length === 0) {
-            try { await stream.write(fromString('EMPTY')); await stream.close(); } catch (e) { }
+            try { await streamSend(stream, fromString('EMPTY')); await stream.close(); } catch (e) { }
             return;
         }
 
@@ -121,15 +133,15 @@ async function handleDropFetch(stream) {
         dropBoxes.delete(boxId);
 
         console.log(`[Buzón] 📬 ENTREGANDO drop de buzón ${boxId.substring(0, 8)}... (${allPayloads.length} chars)`);
-        try { await stream.write(fromString(allPayloads)); await stream.close(); } catch (e) { }
+        try { await streamSend(stream, fromString(allPayloads)); await stream.close(); } catch (e) { }
     } catch (e) {
         console.error(`[Buzón] ❌ Error FETCH: ${e.message}`);
-        try { await stream.write(fromString('EMPTY')); await stream.close(); } catch (e2) { }
+        try { await streamSend(stream, fromString('EMPTY')); await stream.close(); } catch (e2) { }
     }
 }
 
 async function startFaro() {
-    console.log('--- FARO v7.5 (Stream API v3 Fix) ---');
+    console.log('--- FARO v7.6 (stream.send() Fix) ---');
     const port = process.env.PORT || 10000;
 
     let privateKey;
@@ -164,14 +176,13 @@ async function startFaro() {
         console.log(`[Red] 🤝 Conexión de: ${evt.detail.toString()}`);
     });
 
-    // Registrar protocolos (AWAIT obligatorio en libp2p v3)
     await node.handle('/wsmp/drop/store/1.0.0', handleDropStore);
     await node.handle('/wsmp/drop/fetch/1.0.0', handleDropFetch);
-    console.log(`[Faro] Protocolos registrados: ${node.getProtocols().join(', ')}`);
+    console.log(`[Faro] Protocolos: ${node.getProtocols().join(', ')}`);
 
     await node.start();
 
-    console.log(`🚀 FARO v7.5 ONLINE | PeerID: ${node.peerId.toString()}`);
+    console.log(`🚀 FARO v7.6 ONLINE | PeerID: ${node.peerId.toString()}`);
     console.log(`🚀 Puerto ${port}`);
     const addrs = node.getMultiaddrs();
     addrs.forEach(a => console.log(`   📡 ${a.toString()}`));
