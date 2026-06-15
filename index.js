@@ -30,10 +30,6 @@ function logStatus() {
     console.log(`[HEARTBEAT] 💓 FARO V7.6 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
 }
 
-/**
- * Helper universal: envía datos por el stream usando la API disponible.
- * Yamux streams usan send() (en AbstractMessageStream prototype).
- */
 async function streamSend(stream, data) {
     if (typeof stream.send === 'function') {
         await stream.send(data);
@@ -46,25 +42,84 @@ async function streamSend(stream, data) {
     }
 }
 
+function chunkByteLength(c) {
+    if (c.byteLength !== undefined) return c.byteLength;
+    if (c.length !== undefined && typeof c.length === 'number') return c.length;
+    return 0;
+}
+
 /**
- * STORE handler — Lee datos del cliente y responde con OK/ERR.
+ * Lee un payload con formato [4B BE length][payload] del stream.
+ * No depende del cierre del stream — lee exactamente los bytes esperados.
+ * Timeout de 30s para evitar colgarse indefinidamente.
  */
+async function readFramedPayload(stream, maxBytes) {
+    const reader = stream.source || stream;
+    const bl = new Uint8ArrayList();
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; }, 30000);
+
+    try {
+        for await (const chunk of reader) {
+            bl.append(chunk);
+            if (bl.byteLength >= 4) break;
+            if (timedOut) break;
+        }
+        if (timedOut) {
+            console.log(`[Buzón] ⏱️ Timeout esperando cabecera de longitud.`);
+            return null;
+        }
+        if (bl.byteLength < 4) {
+            console.log(`[Buzón] ⚠️ Datos insuficientes (${bl.byteLength} < 4 bytes).`);
+            return null;
+        }
+
+        const header = bl.subarray(0, 4);
+        const payloadLength = (header[0] << 24) | (header[1] << 16) | (header[2] << 8) | header[3];
+
+        if (payloadLength <= 0 || payloadLength > maxBytes) {
+            console.log(`[Buzón] ⚠️ Longitud inválida: ${payloadLength} (max: ${maxBytes}).`);
+            return null;
+        }
+
+        const totalExpected = 4 + payloadLength;
+        if (bl.byteLength >= totalExpected) {
+            return bl.subarray(4, totalExpected);
+        }
+
+        for await (const chunk of reader) {
+            bl.append(chunk);
+            if (bl.byteLength >= totalExpected) break;
+            if (timedOut) break;
+        }
+        if (timedOut) {
+            console.log(`[Buzón] ⏱️ Timeout esperando payload completo.`);
+            return null;
+        }
+        if (bl.byteLength < totalExpected) {
+            console.log(`[Buzón] ⚠️ Payload incompleto (${bl.byteLength} < ${totalExpected}).`);
+            return null;
+        }
+        return bl.subarray(4, totalExpected);
+
+    } catch (e) {
+        console.error(`[Buzón] ❌ Error leyendo stream: ${e.message}`);
+        return null;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 async function handleDropStore(stream) {
     console.log(`[Buzón] 📥 STORE handler invocado!`);
     try {
-        const bl = new Uint8ArrayList();
-        for await (const chunk of stream) {
-            bl.append(chunk);
-            if (bl.length > 1024 * 1024) break;
-        }
-        const rawBytes = bl.subarray();
-        console.log(`[Buzón] 📥 STORE: ${rawBytes.length} bytes leídos.`);
-
-        if (rawBytes.length === 0) {
-            console.log(`[Buzón] ⚠️ STORE: 0 bytes recibidos.`);
+        const rawBytes = await readFramedPayload(stream, 1024 * 1024);
+        if (!rawBytes || rawBytes.length === 0) {
+            console.log(`[Buzón] ⚠️ STORE: payload vacío o inválido.`);
             try { await streamSend(stream, fromString('ERR_EMPTY')); await stream.close(); } catch (e) { }
             return;
         }
+        console.log(`[Buzón] 📥 STORE: ${rawBytes.length} bytes leídos.`);
 
         const rawBody = toString(rawBytes).trim();
         const spaceIdx = rawBody.indexOf(' ');
@@ -88,7 +143,6 @@ async function handleDropStore(stream) {
         box.push({ payload: payloadB64, timestamp: Date.now() });
         console.log(`[Buzón] ✅ ALMACENADO en ID: ${boxId.substring(0, 8)}... (${payloadB64.length} chars)`);
 
-        // Responder OK y cerrar
         try {
             await streamSend(stream, fromString('OK'));
             console.log(`[Buzón] ✅ OK enviado al cliente.`);
@@ -102,24 +156,17 @@ async function handleDropStore(stream) {
     }
 }
 
-/**
- * FETCH handler — Recibe un boxId y responde con el payload o EMPTY.
- */
 async function handleDropFetch(stream) {
     console.log(`[Buzón] 🔍 FETCH handler invocado!`);
     try {
-        const bl = new Uint8ArrayList();
-        for await (const chunk of stream) {
-            bl.append(chunk);
-            if (bl.length > 1024) break;
-        }
-
-        if (bl.length === 0) {
+        const rawBytes = await readFramedPayload(stream, 4096);
+        if (!rawBytes || rawBytes.length === 0) {
+            console.log(`[Buzón] ⚠️ FETCH: payload vacío.`);
             try { await streamSend(stream, fromString('EMPTY')); await stream.close(); } catch (e) { }
             return;
         }
 
-        const boxId = toString(bl.subarray()).trim();
+        const boxId = toString(rawBytes).trim();
         console.log(`[Buzón] 🔍 FETCH solicitado: ${boxId.substring(0, 8)}...`);
 
         const box = dropBoxes.get(boxId);
@@ -141,7 +188,7 @@ async function handleDropFetch(stream) {
 }
 
 async function startFaro() {
-    console.log('--- FARO v7.6 (stream.send() Fix) ---');
+    console.log('--- FARO v8.0 (Framed Protocol) ---');
     const port = process.env.PORT || 10000;
 
     let privateKey;
@@ -182,7 +229,7 @@ async function startFaro() {
 
     await node.start();
 
-    console.log(`🚀 FARO v7.6 ONLINE | PeerID: ${node.peerId.toString()}`);
+    console.log(`🚀 FARO v8.0 ONLINE | PeerID: ${node.peerId.toString()}`);
     console.log(`🚀 Puerto ${port}`);
     const addrs = node.getMultiaddrs();
     addrs.forEach(a => console.log(`   📡 ${a.toString()}`));
