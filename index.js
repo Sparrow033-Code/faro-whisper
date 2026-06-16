@@ -18,7 +18,9 @@ process.on('unhandledRejection', (reason) => {
 });
 
 const dropBoxes = new Map();
+const boxTimestamps = new Map();
 const MAX_DROPS_PER_BOX = 100;
+const BOX_TTL_MS = 60 * 60 * 1000; // 1 hora
 
 function logStatus() {
     let totalMessages = 0;
@@ -27,7 +29,7 @@ function logStatus() {
         totalMessages += msgs.length;
         boxSummaries.push(`${id.substring(0, 8)}(${msgs.length})`);
     }
-    console.log(`[HEARTBEAT] 💓 FARO V7.6 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
+    console.log(`[HEARTBEAT] 💓 FARO v8.0 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | TTL: ${BOX_TTL_MS/60000}min | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
 }
 
 async function streamSend(stream, data) {
@@ -141,6 +143,7 @@ async function handleDropStore(stream) {
         const box = dropBoxes.get(boxId);
         if (box.length >= MAX_DROPS_PER_BOX) box.shift();
         box.push({ payload: payloadB64, timestamp: Date.now() });
+        boxTimestamps.set(boxId, Date.now());
         console.log(`[Buzón] ✅ ALMACENADO en ID: ${boxId.substring(0, 8)}... (${payloadB64.length} chars)`);
 
         try {
@@ -153,6 +156,21 @@ async function handleDropStore(stream) {
     } catch (e) {
         console.error(`[Buzón] ❌ Error STORE: ${e.message}`);
         try { await streamSend(stream, fromString('ERR')); await stream.close(); } catch (e2) { }
+    }
+}
+
+function cleanupStaleBoxes() {
+    const now = Date.now();
+    let cleaned = 0;
+    for (const [boxId, ts] of boxTimestamps.entries()) {
+        if (now - ts > BOX_TTL_MS) {
+            dropBoxes.delete(boxId);
+            boxTimestamps.delete(boxId);
+            cleaned++;
+        }
+    }
+    if (cleaned > 0) {
+        console.log(`[LIMPIEZA] 🧹 ${cleaned} buzones expirados eliminados.`);
     }
 }
 
@@ -178,6 +196,7 @@ async function handleDropFetch(stream) {
         const allPayloads = box.map(m => m.payload).join('\n');
         box.length = 0;
         dropBoxes.delete(boxId);
+        boxTimestamps.delete(boxId);
 
         console.log(`[Buzón] 📬 ENTREGANDO drop de buzón ${boxId.substring(0, 8)}... (${allPayloads.length} chars)`);
         try { await streamSend(stream, fromString(allPayloads)); await stream.close(); } catch (e) { }
@@ -236,6 +255,8 @@ async function startFaro() {
 
     logStatus();
     setInterval(logStatus, 30000);
+    setInterval(cleanupStaleBoxes, 5 * 60 * 1000);
+    setTimeout(cleanupStaleBoxes, 10000); // primera limpieza a los 10s
     setInterval(() => { console.log("[Stay-Alive] 🛡️"); }, 29 * 60 * 1000);
 }
 
