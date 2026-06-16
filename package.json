@@ -1,6 +1,6 @@
 {
   "name": "whispernode-faro",
-  "version": "4.0.0",
+  "version": "8.0.0",
   "description": "Servidor Faro Relay y Rendezvous privado para WhisperNode",
   "main": "index.js",
   "type": "module",
