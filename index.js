@@ -256,6 +256,8 @@ async function handleMerkleProof(stream) {
         try { await streamSend(stream, fromString(response)); await stream.close(); } catch (e) { }
     } catch (e) { try { await streamSend(stream, fromString('EMPTY')); await stream.close(); } catch (e2) { } }
 }
+
+async function handleDropFetch(stream) {
     console.log(`[BuzÃ³n] ðŸ” FETCH handler invocado!`);
     try {
         const rawBytes = await readFramedPayload(stream, 4096);
