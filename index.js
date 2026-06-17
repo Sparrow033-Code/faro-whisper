@@ -302,11 +302,15 @@ async function startFaro() {
         } catch (e) { console.error('âŒ Error FARO_KEY:', e.message); }
     }
 
+    const announceHost = process.env.ANNOUNCE_HOST || 'faro-whisper.onrender.com';
+    const announcePort = process.env.ANNOUNCE_PORT || '443';
+    const announceProto = process.env.ANNOUNCE_PROTO || 'wss';
+
     const node = await createLibp2p({
         ...(privateKey ? { privateKey } : {}),
         addresses: {
             listen: [`/ip4/0.0.0.0/tcp/${port}/ws`],
-            announce: [`/dns4/faro-whisper.onrender.com/tcp/443/wss`]
+            announce: [`/dns4/${announceHost}/tcp/${announcePort}/${announceProto}`]
         },
         transports: [webSockets()],
         connectionEncrypters: [noise()],
