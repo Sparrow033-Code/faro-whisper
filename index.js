@@ -197,7 +197,7 @@ async function handleDropStore(stream) {
         boxTimestamps.set(boxId, Date.now());
 
         // Merkle: registrar leaf
-        merkleLeaves.set(boxId, sha256(boxId + ':' + Date.now()));
+        merkleLeaves.set(boxId, sha256(boxId));
         buildMerkleTree();
 
         console.log(`[BuzÃ³n] âœ… ALMACENADO en ID: ${boxId.substring(0, 8)}... (${payloadB64.length} chars)`);
