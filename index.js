@@ -23,12 +23,24 @@ const boxTimestamps = new Map();
 const MAX_DROPS_PER_BOX = 100;
 const BOX_TTL_MS = 60 * 60 * 1000;
 
-// â•â•â• Merkle Tree (transparencia) â•â•â•
-const merkleLeaves = new Map(); // boxId â†’ sha256(boxId + ts)
+// === Merkle Tree (transparencia) ===
+const merkleLeaves = new Map(); // boxId -> sha256(boxId + ts)
 let merkleRootHex = '0'.repeat(64);
 
 function sha256(data) {
     return crypto.createHash('sha256').update(data).digest('hex');
+}
+
+function checkBundlePoW(powPeerId, nonce, zeroBits) {
+    try {
+        if (!powPeerId || !nonce || !zeroBits) return false;
+        const peerBytes = Buffer.from(powPeerId, 'utf-8');
+        const nonceBuf = Buffer.alloc(4);
+        nonceBuf.writeUInt32BE(nonce, 0);
+        const hash = crypto.createHash('sha256').update(peerBytes).update(nonceBuf).digest('hex');
+        const targetPrefix = '0'.repeat(Math.ceil(zeroBits / 4));
+        return hash.startsWith(targetPrefix);
+    } catch { return false; }
 }
 
 function buildMerkleTree() {
@@ -80,7 +92,7 @@ function logStatus() {
         totalMessages += msgs.length;
         boxSummaries.push(`${id.substring(0, 8)}(${msgs.length})`);
     }
-    console.log(`[HEARTBEAT] ðŸ’“ FARO v8.0 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | TTL: ${BOX_TTL_MS/60000}min | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
+    console.log(`[HEARTBEAT] FARO v8.0 | Buzones: ${dropBoxes.size} | Msgs: ${totalMessages} | TTL: ${BOX_TTL_MS/60000}min | IDs: [${boxSummaries.slice(0, 3).join(', ')}${boxSummaries.length > 3 ? '...' : ''}]`);
 }
 
 async function streamSend(stream, data) {
@@ -91,7 +103,7 @@ async function streamSend(stream, data) {
     } else if (typeof stream.sink === 'function') {
         await stream.sink([data]);
     } else {
-        throw new Error('Stream sin mÃ©todo de envÃ­o');
+        throw new Error('Stream sin metodo de envio');
     }
 }
 
@@ -103,7 +115,7 @@ function chunkByteLength(c) {
 
 /**
  * Lee un payload con formato [4B BE length][payload] del stream.
- * No depende del cierre del stream â€” lee exactamente los bytes esperados.
+ * No depende del cierre del stream  - lee exactamente los bytes esperados.
  * Timeout de 30s para evitar colgarse indefinidamente.
  */
 async function readFramedPayload(stream, maxBytes) {
@@ -119,11 +131,11 @@ async function readFramedPayload(stream, maxBytes) {
             if (timedOut) break;
         }
         if (timedOut) {
-            console.log(`[BuzÃ³n] â±ï¸ Timeout esperando cabecera de longitud.`);
+            console.log(`[Buzon] Timeout esperando cabecera de longitud.`);
             return null;
         }
         if (bl.byteLength < 4) {
-            console.log(`[BuzÃ³n] âš ï¸ Datos insuficientes (${bl.byteLength} < 4 bytes).`);
+            console.log(`[Buzon] ! Datos insuficientes (${bl.byteLength} < 4 bytes).`);
             return null;
         }
 
@@ -131,7 +143,7 @@ async function readFramedPayload(stream, maxBytes) {
         const payloadLength = (header[0] << 24) | (header[1] << 16) | (header[2] << 8) | header[3];
 
         if (payloadLength <= 0 || payloadLength > maxBytes) {
-            console.log(`[BuzÃ³n] âš ï¸ Longitud invÃ¡lida: ${payloadLength} (max: ${maxBytes}).`);
+            console.log(`[Buzon] [!] Longitud invalida: ${payloadLength} (max: ${maxBytes}).`);
             return null;
         }
 
@@ -146,17 +158,17 @@ async function readFramedPayload(stream, maxBytes) {
             if (timedOut) break;
         }
         if (timedOut) {
-            console.log(`[BuzÃ³n] â±ï¸ Timeout esperando payload completo.`);
+            console.log(`[Buzon] [T/O] Timeout esperando payload completo.`);
             return null;
         }
         if (bl.byteLength < totalExpected) {
-            console.log(`[BuzÃ³n] âš ï¸ Payload incompleto (${bl.byteLength} < ${totalExpected}).`);
+            console.log(`[Buzon] [!] Payload incompleto (${bl.byteLength} < ${totalExpected}).`);
             return null;
         }
         return bl.subarray(4, totalExpected);
 
     } catch (e) {
-        console.error(`[BuzÃ³n] âŒ Error leyendo stream: ${e.message}`);
+        console.error(`[Buzon] [ERR] Error leyendo stream: ${e.message}`);
         return null;
     } finally {
         clearTimeout(timer);
@@ -164,20 +176,20 @@ async function readFramedPayload(stream, maxBytes) {
 }
 
 async function handleDropStore(stream) {
-    console.log(`[BuzÃ³n] ðŸ“¥ STORE handler invocado!`);
+    console.log(`[Buzon] [>>] STORE handler invocado!`);
     try {
         const rawBytes = await readFramedPayload(stream, 1024 * 1024);
         if (!rawBytes || rawBytes.length === 0) {
-            console.log(`[BuzÃ³n] âš ï¸ STORE: payload vacÃ­o o invÃ¡lido.`);
+            console.log(`[Buzon] [!] STORE: payload vacio o invalido.`);
             try { await streamSend(stream, fromString('ERR_EMPTY')); await stream.close(); } catch (e) { }
             return;
         }
-        console.log(`[BuzÃ³n] ðŸ“¥ STORE: ${rawBytes.length} bytes leÃ­dos.`);
+        console.log(`[Buzon] [>>] STORE: ${rawBytes.length} bytes leidos.`);
 
         const rawBody = toString(rawBytes).trim();
         const spaceIdx = rawBody.indexOf(' ');
         if (spaceIdx === -1) {
-            console.log(`[BuzÃ³n] âš ï¸ STORE: Formato invÃ¡lido.`);
+            console.log(`[Buzon] [!] STORE: Formato invalido.`);
             try { await streamSend(stream, fromString('ERR_FORMAT')); await stream.close(); } catch (e) { }
             return;
         }
@@ -193,6 +205,22 @@ async function handleDropStore(stream) {
         if (!dropBoxes.has(boxId)) dropBoxes.set(boxId, []);
         const box = dropBoxes.get(boxId);
         if (box.length >= MAX_DROPS_PER_BOX) box.shift();
+
+        // PoW anti-Sybil: si el payload parece un PreKey Bundle, validar proof-of-work
+        try {
+            const decoded = toString(fromString(payloadB64, 'base64pad'));
+            const parsed = JSON.parse(decoded);
+            if (parsed.powNonce !== undefined && parsed.powBits > 0 && parsed.powPeerId) {
+                const powValid = checkBundlePoW(parsed.powPeerId, parsed.powNonce, parsed.powBits);
+                if (!powValid) {
+                    console.log(`[PoW] [ERR] Bundle rechazado - PoW invalido (peer=${parsed.powPeerId.substring(0,8)}..., bits=${parsed.powBits}, nonce=${parsed.powNonce})`);
+                    try { await streamSend(stream, fromString('ERR_POW')); await stream.close(); } catch (e) { }
+                    return;
+                }
+                console.log(`[PoW] [OK] Bundle aceptado (${parsed.powBits}b, ${parsed.powNonce.toLocaleString()} intentos)`);
+            }
+        } catch { /* No es JSON o no tiene PoW  - aceptar igual */ }
+
         box.push({ payload: payloadB64, timestamp: Date.now() });
         boxTimestamps.set(boxId, Date.now());
 
@@ -200,17 +228,17 @@ async function handleDropStore(stream) {
         merkleLeaves.set(boxId, sha256(boxId));
         buildMerkleTree();
 
-        console.log(`[BuzÃ³n] âœ… ALMACENADO en ID: ${boxId.substring(0, 8)}... (${payloadB64.length} chars)`);
+        console.log(`[Buzon] [OK] ALMACENADO en ID: ${boxId.substring(0, 8)}... (${payloadB64.length} chars)`);
 
         try {
             await streamSend(stream, fromString('OK'));
-            console.log(`[BuzÃ³n] âœ… OK enviado al cliente.`);
+            console.log(`[Buzon] [OK] OK enviado al cliente.`);
             await stream.close();
         } catch (e) {
-            console.log(`[BuzÃ³n] âš ï¸ No se pudo enviar OK: ${e.message}`);
+            console.log(`[Buzon] [!] No se pudo enviar OK: ${e.message}`);
         }
     } catch (e) {
-        console.error(`[BuzÃ³n] âŒ Error STORE: ${e.message}`);
+        console.error(`[Buzon] [ERR] Error STORE: ${e.message}`);
         try { await streamSend(stream, fromString('ERR')); await stream.close(); } catch (e2) { }
     }
 }
@@ -227,7 +255,7 @@ function cleanupStaleBoxes() {
         }
     }
     if (cleaned > 0) {
-        console.log(`[LIMPIEZA] ðŸ§¹ ${cleaned} buzones expirados eliminados.`);
+        console.log(`[LIMPIEZA] ${cleaned} buzones expirados eliminados.`);
     }
 }
 
@@ -258,17 +286,17 @@ async function handleMerkleProof(stream) {
 }
 
 async function handleDropFetch(stream) {
-    console.log(`[BuzÃ³n] ðŸ” FETCH handler invocado!`);
+    console.log(`[Buzon] [?] FETCH handler invocado!`);
     try {
         const rawBytes = await readFramedPayload(stream, 4096);
         if (!rawBytes || rawBytes.length === 0) {
-            console.log(`[BuzÃ³n] âš ï¸ FETCH: payload vacÃ­o.`);
+            console.log(`[Buzon] [!] FETCH: payload vacio.`);
             try { await streamSend(stream, fromString('EMPTY')); await stream.close(); } catch (e) { }
             return;
         }
 
         const boxId = toString(rawBytes).trim();
-        console.log(`[BuzÃ³n] ðŸ” FETCH solicitado: ${boxId.substring(0, 8)}...`);
+        console.log(`[Buzon] [?] FETCH solicitado: ${boxId.substring(0, 8)}...`);
 
         const box = dropBoxes.get(boxId);
         if (!box || box.length === 0) {
@@ -283,10 +311,10 @@ async function handleDropFetch(stream) {
         merkleLeaves.delete(boxId);
         buildMerkleTree();
 
-        console.log(`[BuzÃ³n] ðŸ“¬ ENTREGANDO drop de buzÃ³n ${boxId.substring(0, 8)}... (${allPayloads.length} chars)`);
+        console.log(`[Buzon] [<<] ENTREGANDO drop de buzon ${boxId.substring(0, 8)}... (${allPayloads.length} chars)`);
         try { await streamSend(stream, fromString(allPayloads)); await stream.close(); } catch (e) { }
     } catch (e) {
-        console.error(`[BuzÃ³n] âŒ Error FETCH: ${e.message}`);
+        console.error(`[Buzon] [ERR] Error FETCH: ${e.message}`);
         try { await streamSend(stream, fromString('EMPTY')); await stream.close(); } catch (e2) { }
     }
 }
@@ -299,7 +327,7 @@ async function startFaro() {
     if (process.env.FARO_KEY) {
         try {
             privateKey = privateKeyFromProtobuf(fromString(process.env.FARO_KEY, 'base64pad'));
-        } catch (e) { console.error('âŒ Error FARO_KEY:', e.message); }
+        } catch (e) { console.error('[ERR] Error FARO_KEY:', e.message); }
     }
 
     const announceHost = process.env.ANNOUNCE_HOST || 'faro-whisper.onrender.com';
@@ -328,7 +356,7 @@ async function startFaro() {
     });
 
     node.addEventListener('peer:connect', (evt) => {
-        console.log(`[Red] ðŸ¤ ConexiÃ³n de: ${evt.detail.toString()}`);
+        console.log(`[Red] Conexion de: ${evt.detail.toString()}`);
     });
 
     await node.handle('/wsmp/drop/store/1.0.0', handleDropStore);
@@ -339,16 +367,16 @@ async function startFaro() {
 
     await node.start();
 
-    console.log(`ðŸš€ FARO v8.0 ONLINE | PeerID: ${node.peerId.toString()}`);
-    console.log(`ðŸš€ Puerto ${port}`);
+    console.log(`FARO v8.0 ONLINE | PeerID: ${node.peerId.toString()}`);
+    console.log(`Puerto ${port}`);
     const addrs = node.getMultiaddrs();
-    addrs.forEach(a => console.log(`   ðŸ“¡ ${a.toString()}`));
+    addrs.forEach(a => console.log(`   ${a.toString()}`));
 
     logStatus();
     setInterval(logStatus, 30000);
     setInterval(cleanupStaleBoxes, 5 * 60 * 1000);
     setTimeout(cleanupStaleBoxes, 10000); // primera limpieza a los 10s
-    setInterval(() => { console.log("[Stay-Alive] ðŸ›¡ï¸"); }, 29 * 60 * 1000);
+    setInterval(() => { console.log("[Stay-Alive]"); }, 29 * 60 * 1000);
 }
 
-startFaro().catch(err => { console.error('âŒ ERROR GLOBAL:', err); process.exit(1); });
+startFaro().catch(err => { console.error('[ERR] ERROR GLOBAL:', err); process.exit(1); });
