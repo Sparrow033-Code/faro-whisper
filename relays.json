@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "timestamp": 1781861648232,
+  "relays": [
+    "/dns4/faro-whisper.onrender.com/tcp/443/wss/p2p/12D3KooWSW3vcT7Qc6Y9v5hxWYXTBtbV5QeNBekftH1crRrrQszK",
+    "/dns4/faro-whisper-2.onrender.com/tcp/443/wss/p2p/12D3KooWNrftvfpvcWogWhSGsGM8DsAaeVC1adJdFdgEw3AukNja",
+    "/dns4/faro-whisper3.onrender.com/tcp/443/wss/p2p/12D3KooWFFCiR6tcXEvqm6UBmRozfKptsZhiNA25fjWM2fTMwGE1",
+    "/dns4/faro-whisper4.onrender.com/tcp/443/wss/p2p/12D3KooWKTWDr6mhiLWm5m4bFRx7wCCDTjQDjtqnWeHEGeJirdmg",
+    "/dns4/faro-whisper5.onrender.com/tcp/443/wss/p2p/12D3KooWKo88Tw6CoUYXe4gFK79wEUZYdhWGWvygom7qXzgMPJLx",
+    "/dns4/faro-whisper6.onrender.com/tcp/443/wss/p2p/12D3KooWBGmk94bY9PNowP3gPWraKHgCceRfjYxUJgj91rZmUKdQ",
+    "/dns4/faro-whisper7.onrender.com/tcp/443/wss/p2p/12D3KooWHxDdLskBDd79X4qfdTh7toA4NTvMM3sQ6ZUS8o7fR3p7"
+  ],
+  "revoked": [],
+  "signature": "a1da23650c37baf97312f781b3c262de3d4bdfc382954d2cf4043b45b987d54fd4b03ffb42a060934007ea7394b2cc3a7853e6450cf94f35d8fa0fe753ebe203"
+}
